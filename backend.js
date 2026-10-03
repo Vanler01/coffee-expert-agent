@@ -382,6 +382,14 @@
       const el = document.getElementById(id);
       if (el) (el.closest("label") || el).style.display = "none";
     }
+    const status = document.getElementById("status");      // ลิงก์อธิบายวิธีสร้าง/การทำงาน ในหน้าตั้งค่า (เฉพาะเว็บ)
+    if (status && !document.getElementById("howLink")) {
+      const a = document.createElement("a");
+      a.id = "howLink"; a.href = "how-it-works.txt"; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = "📄 วิธีสร้างและการทำงาน · How it works";
+      a.style.cssText = "display:block;font-size:13px;margin:-6px 0 14px";
+      status.insertAdjacentElement("afterend", a);
+    }
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 })(typeof globalThis !== "undefined" ? globalThis : this);
