@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- ไอคอนเว็บ: เมล็ดกาแฟเมล็ดเดียว รอยผ่ากลางโค้งตัว S แบบอาราบิก้า -->
+  <g transform="rotate(-32 32 32)">
+    <ellipse cx="32" cy="32" rx="18" ry="25" fill="#6b3f22"/>
+    <ellipse cx="26" cy="22" rx="6" ry="9" fill="#8a5631" opacity=".55"/>
+    <path d="M32 8 C23 20 41 31 32 43 C27 50 31 54 32 56" fill="none" stroke="#e9cfa8"
+          stroke-width="3.6" stroke-linecap="round"/>
+  </g>
+</svg>

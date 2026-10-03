@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coffee Expert Agent</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#2a1d15">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Coffee Agent">
+
+<style>
+  :root{
+    --bg:#f6f3ef; --panel:#fffdfb; --soft:#ffffff; --line:#e6ddd3; --text:#2c2018; --muted:#8a7866;
+    --brand:#7b4b2a; --brand-soft:#f0e4d8; --user:#7b4b2a; --err:#a33; --ok:#2f7a4f; --warn:#a8741f;
+    --wheelbg:#d7d9d2;   /* พื้นหลังเทาอ่อนแบบโปสเตอร์ SCAA */
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#17120e; --panel:#211a15; --soft:#2c241e; --line:#3d3027; --text:#efe6dc; --muted:#a79383;
+      --brand:#d9a273; --brand-soft:#2e231b; --user:#8a5a35; --err:#e08a8a; --ok:#7fc79f; --warn:#d8ab5c;
+      --wheelbg:#2a2d29;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column;
+    font-family:"Sukhumvit Set","Noto Sans Thai","Hiragino Sans","Microsoft YaHei",-apple-system,
+                BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  /* แถบบนไม่มีพื้นหลังและเส้นขอบ — เหลือแค่ปุ่มลอยชิดขวาบน */
+  .topbar{display:flex; justify-content:flex-end; align-items:center; gap:6px; padding:10px 14px 0; flex:none}
+  button,select{
+    font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--soft);
+    color:var(--text); border-radius:8px; padding:6px 11px; font-size:13px;
+  }
+  button:hover,select:hover{border-color:var(--brand)}
+  button:disabled{opacity:.5; cursor:not-allowed}
+  .primary{background:var(--brand); border-color:var(--brand); color:#fff}
+  .primary:hover{filter:brightness(1.08)}
+
+  .quota{                                 /* ไม่มีกรอบ: จุดสีบอกสถานะ + จำนวนที่เหลือ */
+    display:inline-flex; align-items:center; gap:6px; font-size:12.5px; padding:6px 6px;
+    color:var(--muted); cursor:help; white-space:nowrap;
+  }
+  .quota .dotq{width:7px; height:7px; border-radius:50%; background:var(--ok); flex:none}
+  .quota.warn .dotq{background:var(--warn)}
+  .quota.out  .dotq{background:var(--err)}
+  .quota.warn{color:var(--warn)}
+  .quota.out {color:var(--err)}
+
+  /* ---------- โครงหลัก: แชทเต็มจอ · วงล้อ/ระดับคั่วเป็นปุ่มไอคอนบน header เปิดเป็นป๊อปอัป ---------- */
+  .chatview{flex:1; min-height:0; display:flex; flex-direction:column}
+  .tools{display:flex; gap:6px}
+  .iconbtn{display:inline-flex; align-items:center; gap:6px; padding:7px 11px; border-color:transparent; border-radius:10px}
+  .iconbtn .ico{font-size:17px; line-height:1}
+  .iconbtn:hover{border-color:var(--brand)}
+  .sidetools{position:fixed; left:14px; top:50%; transform:translateY(-50%); z-index:5;
+             display:flex; flex-direction:column; gap:8px}
+  .sidetools .iconbtn{width:44px; height:44px; justify-content:center; padding:0}
+  .sidetools .iconbtn .ico{font-size:20px}
+
+  main{flex:1; overflow-y:auto; padding:20px 16px}
+  .wrap{max-width:820px; margin:0 auto; display:flex; flex-direction:column; gap:16px}
+
+  .msg{display:flex; gap:10px; align-items:flex-start}
+  .msg.me{flex-direction:row-reverse}
+  .avatar{
+    width:30px; height:30px; border-radius:50%; flex:none; display:grid; place-items:center;
+    background:var(--brand-soft); font-size:15px;
+  }
+  .msg.me .avatar{background:var(--user); color:#fff; font-size:12px}
+  .bubble{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:11px 14px; max-width:min(78%,640px); line-height:1.65; overflow-wrap:anywhere;
+  }
+  .msg.me .bubble{background:var(--user); border-color:var(--user); color:#fff}
+  .bubble p{margin:0 0 8px}  .bubble p:last-child{margin-bottom:0}
+  .bubble ul{margin:6px 0; padding-left:20px}  .bubble li{margin:3px 0}
+  .bubble code{background:var(--brand-soft); padding:1px 5px; border-radius:4px; font-size:.92em}
+  .msg.me .bubble code{background:rgba(255,255,255,.2)}
+  .bubble.error{border-color:var(--err); color:var(--err)}
+  .notice{
+    font-size:12px; color:var(--muted); background:var(--brand-soft);
+    border-radius:6px; padding:5px 9px; margin-bottom:9px;
+  }
+  details.trace{margin-top:9px; font-size:12px; color:var(--muted)}
+  details.trace summary{cursor:pointer; user-select:none}
+  details.trace ol{margin:7px 0 0; padding-left:18px}
+  details.trace li{margin:3px 0}
+  details.trace b{color:var(--text)}
+
+  /* ---------- การ์ดคำตอบ (แนว KitchenFlow: ป้ายบอกว่าคำตอบมาจากไหน · ที่มา · ถามต่อ) ---------- */
+  .badge{
+    display:inline-block; font-size:11.5px; color:var(--muted); background:var(--brand-soft);
+    border-radius:999px; padding:3px 10px; margin-bottom:8px;
+  }
+  .badge.fast{color:var(--ok)}
+  .cardtitle{font-weight:700; margin:0 0 4px}
+  .srcs{margin-top:10px; font-size:12px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center}
+  .srcs button{font-size:11.5px; padding:3px 9px; border-radius:999px; color:var(--brand); background:var(--panel)}
+  .acts{margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; align-items:center}
+  .acts .lbl{font-size:12px; color:var(--muted)}
+  .acts button{font-size:12.5px; padding:5px 11px; border-radius:999px}
+  .acts button.ai{border-color:var(--brand); color:var(--brand)}
+  .srctext{white-space:pre-wrap; color:var(--text) !important; max-height:50vh; overflow:auto}
+
+  .thinking{display:flex; gap:5px; align-items:center; color:var(--muted); font-size:14px}
+  .dot{width:6px; height:6px; border-radius:50%; background:var(--muted); animation:blink 1.4s infinite}
+  .dot:nth-child(2){animation-delay:.2s}  .dot:nth-child(3){animation-delay:.4s}
+  @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+
+  .welcome{text-align:center; padding:26px 0 8px}
+  .welcome h1{font-size:22px; margin:12px 0 6px}
+  .welcome p{color:var(--muted); margin:0 0 18px; font-size:14px}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; justify-content:center}
+  .chip{
+    background:var(--soft); border:1px solid var(--line); border-radius:999px;
+    padding:8px 14px; font-size:13px; cursor:pointer; text-align:left;
+  }
+  .chip:hover{border-color:var(--brand); color:var(--brand)}
+  .morechips{margin-top:12px; font-size:12.5px; color:var(--muted); background:none; border:none;
+             text-decoration:underline; cursor:pointer}
+
+  footer{padding:6px 16px 12px; flex:none}            /* ไม่มีแถบหนา — เหลือช่องแชทกับข้อความเล็กข้างใต้ */
+  .composer{max-width:820px; margin:0 auto; display:flex; gap:9px; align-items:flex-end}
+  textarea{
+    flex:1; font:inherit; color:var(--text); background:var(--soft); resize:none;
+    border:1px solid var(--line); border-radius:10px; padding:11px 13px; max-height:160px; line-height:1.5;
+  }
+  textarea:focus{outline:none; border-color:var(--brand)}
+  .hint{max-width:820px; margin:7px auto 0; font-size:11.5px; color:var(--muted); text-align:center}
+
+  /* ---------- ป๊อปอัปวงล้อกลิ่นรส / ระดับการคั่ว ---------- */
+  dialog.wide{max-width:1040px; width:calc(100% - 24px); max-height:calc(100vh - 24px); overflow:auto}
+  .panelbody{padding:18px 20px 22px; position:relative}
+  .panelbody h2{margin:0 0 5px; font-size:19px; padding-right:40px}
+  .xbtn{position:absolute; top:12px; right:12px; width:34px; height:34px; padding:0; border-radius:50%; font-size:16px}
+  .flavorlayout{display:grid; grid-template-columns:minmax(0,1.35fr) minmax(240px,1fr); gap:16px; align-items:start}
+  .fdetail{background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:15px 16px; position:sticky; top:0}
+  .fdetail .empty{color:var(--muted); font-size:13.5px; line-height:1.6}
+  .fpath{font-size:11.5px; color:var(--muted); margin-bottom:6px}
+  .fname{display:flex; align-items:center; gap:9px; font-size:18px; font-weight:700; margin:0 0 8px}
+  .fchip{width:18px; height:18px; border-radius:5px; border:1px solid rgba(0,0,0,.2); flex:none}
+  .ftag{display:inline-block; font-size:11.5px; border-radius:999px; padding:2px 9px; margin-bottom:10px; border:1px solid var(--line)}
+  .ftag.good{color:var(--ok); border-color:var(--ok)} .ftag.defect{color:var(--err); border-color:var(--err)} .ftag.neutral{color:var(--warn); border-color:var(--warn)}
+  .fdesc{font-size:14.5px; line-height:1.65; margin:0 0 10px}
+  .ffrom{font-size:13px; line-height:1.6; color:var(--muted); margin:0 0 14px}
+  .ffrom b{color:var(--text)}
+  .fsubs{display:flex; flex-wrap:wrap; gap:5px; margin:0 0 14px}
+  .fsubs button{font-size:11.5px; padding:3px 9px; border-radius:999px}
+  .panelbody .lead{color:var(--muted); font-size:13.5px; margin:0 0 4px; line-height:1.6}
+  .panelbody .lead2{color:var(--brand); font-size:12.5px; margin:0 0 16px}
+  .wheelbox{background:var(--wheelbg); border-radius:14px; padding:10px; border:1px solid var(--line)}
+  .wheel-svg{width:100%; height:auto; display:block}
+  .wedge{cursor:pointer; transition:opacity .12s}
+  .wedge:hover{opacity:.72}
+  .wedge-label{font-weight:700; letter-spacing:.2px; user-select:none; font-family:Arial,Helvetica,sans-serif}
+
+  /* ---------- แผงระดับการคั่ว ---------- */
+  .roastbar{display:flex; gap:5px; margin:0 0 20px}
+  .roastbar button{
+    flex:1; border:1px solid var(--line); border-radius:9px; padding:9px 3px 7px;
+    display:flex; flex-direction:column; align-items:center; gap:5px; background:var(--panel);
+  }
+  .roastbar button:hover{border-color:var(--brand)}
+  .roastbar button.on{border-color:var(--brand); border-width:2px; background:var(--brand-soft)}
+  .swatch{width:100%; height:16px; border-radius:4px; border:1px solid rgba(0,0,0,.18)}
+  .roastbar small{font-size:9px; color:var(--muted); line-height:1.15; text-align:center}
+  .roastbar button.on small{color:var(--brand); font-weight:700}
+
+  .beans{display:flex; gap:22px; flex-wrap:wrap; justify-content:center; margin:0 0 18px}
+  .beancard{
+    background:var(--panel); border:1px solid var(--line); border-radius:13px;
+    padding:16px 22px; text-align:center; min-width:168px;
+  }
+  .beancard .bean{width:104px; height:104px; display:block; margin:0 auto 8px}
+  .beancard b{font-size:14px}
+  .roastinfo{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px 17px}
+  .roastinfo h3{margin:0 0 9px; font-size:16px}
+  .roastinfo dl{display:grid; grid-template-columns:auto 1fr; gap:6px 14px; margin:0; font-size:13.5px}
+  .roastinfo dt{color:var(--muted)}
+  .roastinfo dd{margin:0}
+  .roastinfo .desc{margin:11px 0 0; font-size:13.5px; line-height:1.65}
+  .beannote{font-size:12px; color:var(--muted); text-align:center; margin:0 0 18px}
+
+  dialog{
+    border:1px solid var(--line); border-radius:14px; background:var(--panel); color:var(--text);
+    padding:0; max-width:480px; width:calc(100% - 32px);
+  }
+  dialog::backdrop{background:rgba(0,0,0,.45)}
+  .dlg{padding:22px}
+  .dlg h2{margin:0 0 10px; font-size:17px}
+  .dlg p{color:var(--muted); font-size:13.5px; line-height:1.62; margin:0 0 12px}
+  .dlg ul{margin:0 0 12px; padding-left:20px; color:var(--muted); font-size:13.5px; line-height:1.62}
+  .dlg li{margin:5px 0}
+  .dlg b{color:var(--text)}
+  .dlg input{
+    width:100%; font:inherit; padding:10px 12px; border-radius:8px;
+    border:1px solid var(--line); background:var(--bg); color:var(--text);
+  }
+  .dlg input:focus{outline:none; border-color:var(--brand)}
+  .dlg input[type=checkbox]{width:auto; padding:0; margin:0}
+  .dlg .row{display:flex; gap:9px; justify-content:flex-end; margin-top:16px; align-items:center}
+  .dlg a{color:var(--brand)}
+  .note{font-size:12.5px; margin-top:10px}
+  .note.err{color:var(--err)}  .note.ok{color:var(--ok)}
+  .testchk{margin-top:16px; font-size:13.5px; color:var(--text)}
+  .dlg{position:relative}
+  .dlg h3{margin:18px 0 6px; font-size:14.5px}
+  .setstatus{font-size:12.5px !important; background:var(--bg); border-radius:8px; padding:8px 11px; margin:0 0 14px !important}
+  .setrow{display:flex; align-items:center; gap:10px; margin:0 0 10px; font-size:13.5px}
+  .setrow label{flex:1}
+  .keyrow{display:flex; gap:8px}
+  .keyrow input{flex:1}
+  .chk{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-right:auto; cursor:pointer}
+  .big{
+    background:var(--brand-soft); border-radius:9px; padding:11px 13px; margin:0 0 13px;
+    font-size:14px; color:var(--text); line-height:1.6;
+  }
+
+  @media (max-width:640px){
+    .bubble{max-width:100%}
+    main{padding:14px 12px}
+    .topbar{gap:4px; padding:8px 10px 0}
+    .sidetools{left:6px}
+    .sidetools .iconbtn{width:38px; height:38px}
+    main, footer{padding-left:52px}                 /* จอแคบ: เว้นที่ให้ไอคอนซ้ายไม่ทับข้อความ */
+    .quota #quotaText{max-width:110px; overflow:hidden; text-overflow:ellipsis}
+    .iconbtn .lbl{display:none}
+    .flavorlayout{grid-template-columns:1fr}
+    .roastbar{flex-wrap:wrap}
+    .roastbar button{min-width:60px}
+  }
+</style>
+</head>
+<body>
+
+<!-- วงล้อกลิ่นรส / ระดับการคั่ว: ไอคอนเรียงแนวตั้ง ชิดซ้าย กึ่งกลางความสูงจอ -->
+<nav class="sidetools">
+  <button class="iconbtn" id="btnWheel"><span class="ico">🎨</span></button>
+  <button class="iconbtn" id="btnRoast"><span class="ico">🔥</span></button>
+</nav>
+
+<div class="topbar">
+  <div class="quota" id="quota" title=""><span class="dotq"></span><span id="quotaText">…</span></div>
+  <button class="iconbtn" id="btnSettings"><span id="settingsLbl"></span><span class="ico">⚙️</span></button>
+</div>
+
+<section class="chatview" id="viewChat">
+  <main id="main"><div class="wrap" id="chat"></div></main>
+  <footer>
+    <div class="composer">
+      <textarea id="input" rows="1"></textarea>
+      <button class="primary" id="btnSend"></button>
+    </div>
+    <div class="hint" id="hint"></div>
+  </footer>
+</section>
+
+<!-- วงล้อกลิ่นรส: กดช่องไหนก็ได้ → ดูคำอธิบายก่อน → ถามเพิ่มเติมในแชทได้ -->
+<dialog id="wheelDialog" class="wide">
+  <div class="panelbody">
+    <button class="xbtn" data-close="wheelDialog">✕</button>
+    <h2 id="wheelTitle"></h2>
+    <p class="lead" id="wheelSub"></p>
+    <p class="lead2" id="wheelHint"></p>
+    <div class="flavorlayout">
+      <div class="wheelbox" id="wheelBox"></div>
+      <div class="fdetail" id="fdetail"></div>
+    </div>
+  </div>
+</dialog>
+
+<!-- ระดับการคั่ว: ดูอย่างเดียว -->
+<dialog id="roastDialog" class="wide">
+  <div class="panelbody">
+    <button class="xbtn" data-close="roastDialog">✕</button>
+    <h2 id="roastTitle"></h2>
+    <p class="lead" id="roastSub"></p>
+    <div class="roastbar" id="roastBar"></div>
+    <div class="beans" id="beans"></div>
+    <p class="beannote" id="beanNote"></p>
+    <div class="roastinfo" id="roastInfo"></div>
+  </div>
+</dialog>
+
+<dialog id="introDialog">
+  <div class="dlg">
+    <h2 id="introTitle"></h2>
+    <div class="big" id="introLimit"></div>
+    <ul>
+      <li id="introQuick"></li>
+      <li id="introQuota"></li>
+      <li id="introWhy"></li>
+      <li id="introSwitch"></li>
+      <li id="introReset"></li>
+      <li id="introFree"></li>
+    </ul>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="introSkip"><span id="dontShow"></span></label>
+      <button class="primary" id="introOk"></button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="keyDialog">
+  <div class="dlg">
+    <button class="xbtn" data-close="keyDialog">✕</button>
+    <h2 id="settingsTitle"></h2>
+    <p class="setstatus" id="status">…</p>
+    <div class="setrow"><label id="langLbl" for="langSel"></label><select id="langSel"></select></div>
+    <div class="setrow"><label id="clearLbl"></label><button id="btnReset"></button></div>
+    <h3 id="keyTitle"></h3>
+    <p id="keyBody"></p>
+    <div class="keyrow">
+      <input id="keyInput" type="password" autocomplete="off" spellcheck="false">
+      <button class="primary" id="keySave"></button>
+    </div>
+    <div class="note" id="keyNote"></div>
+    <label class="chk testchk"><input type="checkbox" id="fullAi"><span id="fullAiLbl"></span></label>
+    <p class="note" id="fullAiNote" style="color:var(--muted); margin:4px 0 0"></p>
+    <label class="chk testchk"><input type="checkbox" id="testMode"><span id="testModeLbl"></span></label>
+    <p class="note" id="testModeNote" style="color:var(--muted); margin:4px 0 0"></p>
+    <div class="row"><button id="keyCancel"></button></div>
+  </div>
+</dialog>
+
+<dialog id="srcDialog">
+  <div class="dlg">
+    <h2 id="srcTitle"></h2>
+    <p class="note" id="srcLabel"></p>
+    <p class="srctext" id="srcText"></p>
+    <div class="row"><button class="primary" id="srcClose"></button></div>
+  </div>
+</dialog>
+
+<script src="i18n.js"></script>
+<script src="panels.js"></script>
+<script src="k.js"></script>
+<script src="engine.js"></script>
+<script src="backend.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const chat = $("chat"), main = $("main"), input = $("input");
+let noKey = false;
+let busy = false, lang = "th", T = window.I18N.th, quota = null, tick = null;
+let roastIdx = 3, showAllChips = false, wheelDrawn = false;
+const CHIPS_SHOWN = 6;
+
+function store(k, v){ try{ v===undefined ? localStorage.removeItem(k) : localStorage.setItem(k,v); }catch{} }
+function load(k){ try{ return localStorage.getItem(k); }catch{ return null; } }
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function render(text){
+  const lines = escapeHtml(text).split("\n");
+  let html = "", inList = false;
+  const inline = s => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>");
+  for (const raw of lines){
+    const line = raw.trim();
+    const m = line.match(/^[*\-•]\s+(.*)$/);
+    if (m){
+      if (!inList){ html += "<ul>"; inList = true; }
+      html += "<li>" + inline(m[1]) + "</li>";
+    } else {
+      if (inList){ html += "</ul>"; inList = false; }
+      if (line) html += "<p>" + inline(line) + "</p>";
+    }
+  }
+  if (inList) html += "</ul>";
+  return html || "<p></p>";
+}
+const scroll = () => { main.scrollTop = main.scrollHeight; };
+
+// ---------- ป๊อปอัปวงล้อกลิ่นรส / ระดับการคั่ว (แทนแถบเมนูซ้ายเดิม)
+let flavorInfo = null, pickedFlavor = null;
+for (const b of document.querySelectorAll("[data-close]")) b.onclick = () => $(b.dataset.close).close();
+for (const d of document.querySelectorAll("dialog.wide"))          // คลิกพื้นหลังมืดเพื่อปิด
+  d.addEventListener("click", e => { if (e.target === d) d.close(); });
+
+async function openWheel(){
+  if (!wheelDrawn){ window.renderFlavorWheel($("wheelBox"), showFlavor); wheelDrawn = true; }
+  if (!flavorInfo){
+    try{ flavorInfo = await (await fetch("/flavors.json")).json(); }catch{ flavorInfo = {}; }
+  }
+  drawFlavor();
+  $("wheelDialog").showModal();
+}
+$("btnWheel").onclick = openWheel;
+$("btnRoast").onclick = () => { drawRoast(); $("roastDialog").showModal(); };
+
+/** หาเส้นทางของกลิ่นรสในวงล้อ เช่น FRUITY › BERRY › BLUEBERRY (ชื่อซ้ำได้ เอาตัวแรกที่เจอ) */
+function flavorPath(name, nodes = window.FLAVOR_WHEEL, trail = []){
+  for (const n of nodes){
+    const here = [...trail, n];
+    if (n.name === name) return here;
+    const found = n.children && flavorPath(name, n.children, here);
+    if (found) return found;
+  }
+  return null;
+}
+function showFlavor(name){
+  pickedFlavor = name; drawFlavor();
+  if (window.innerWidth <= 640) $("fdetail").scrollIntoView({behavior: "smooth", block: "nearest"});  // มือถือ: คำอธิบายอยู่ใต้วงล้อ
+}
+function drawFlavor(){
+  const box = $("fdetail");
+  if (!pickedFlavor){ box.innerHTML = `<p class="empty">${escapeHtml(T.flavorPick)}</p>`; return; }
+  const path = flavorPath(pickedFlavor) || [{name: pickedFlavor, color: "#999"}];
+  const node = path[path.length - 1];
+  const x = (flavorInfo || {})[pickedFlavor] || {};
+  const en = lang !== "th";                                       // ภาษาอื่นใช้คำอธิบายอังกฤษ
+  const desc = (en ? x.en : x.th) || "", from = (en ? x.from_en : x.from_th) || "";
+  const subs = (node.children || []).map(c => `<button data-flavor="${escapeHtml(c.name)}">${escapeHtml(c.name)}</button>`).join("");
+  box.innerHTML = `
+    <div class="fpath">${path.map(n => escapeHtml(n.name)).join(" › ")}</div>
+    <div class="fname"><span class="fchip" style="background:${node.color}"></span>${escapeHtml(node.name)}</div>
+    ${x.kind ? `<span class="ftag ${x.kind}">${escapeHtml(T.flavorKind[x.kind])}</span>` : ""}
+    <p class="fdesc">${escapeHtml(desc)}</p>
+    ${from ? `<p class="ffrom"><b>${escapeHtml(T.flavorFrom)}</b> ${escapeHtml(from)}</p>` : ""}
+    ${subs ? `<div class="fsubs">${subs}</div>` : ""}
+    <button class="primary" id="flavorAsk">💬 ${escapeHtml(T.flavorAsk)}</button>`;
+  for (const b of box.querySelectorAll("[data-flavor]")) b.onclick = () => showFlavor(b.dataset.flavor);
+  $("flavorAsk").onclick = () => { $("wheelDialog").close(); send(T.askAbout(pickedFlavor)); };
+}
+
+// ---------- ระดับการคั่ว
+function drawRoast(){
+  const bar = $("roastBar"); bar.innerHTML = "";
+  window.ROAST_LEVELS.forEach((lv, i) => {
+    const b = document.createElement("button");
+    if (i === roastIdx) b.className = "on";
+    b.innerHTML = `<div class="swatch" style="background:${lv.arabica}"></div>
+                   <small>${escapeHtml(lv.name.split(" / ")[0])}</small>`;
+    b.title = lv.name;
+    b.onclick = () => { roastIdx = i; drawRoast(); };
+    bar.appendChild(b);
+  });
+
+  const lv = window.ROAST_LEVELS[roastIdx];
+  $("beans").innerHTML = `
+    <div class="beancard">${window.beanSvg(lv.arabica, "arabica", lv.gloss || 0)}<b>${escapeHtml(T.arabica)}</b></div>
+    <div class="beancard">${window.beanSvg(lv.robusta, "robusta", lv.gloss || 0)}<b>${escapeHtml(T.robusta)}</b></div>`;
+  $("beanNote").textContent = T.beanNote;
+
+  const crack = lv.crack === "first" ? T.crackFirst : lv.crack === "second" ? T.crackSecond : T.crackNone;
+  $("roastInfo").innerHTML = `
+    <h3>${escapeHtml(lv.name)}</h3>
+    <dl>
+      <dt>${escapeHtml(T.tempLabel)}</dt><dd>${escapeHtml(lv.temp)}</dd>
+      <dt>${escapeHtml(T.crackLabel)}</dt><dd>${escapeHtml(crack)}</dd>
+      <dt>${escapeHtml(T.menuLabel)}</dt><dd>${escapeHtml(T.roastMenu[roastIdx])}</dd>
+    </dl>
+    <p class="desc">${escapeHtml(T.roastDesc[roastIdx])}</p>`;
+}
+
+// ---------- ภาษา
+function applyLang(){
+  T = window.I18N[lang] || window.I18N.th;
+  document.documentElement.lang = lang;
+  $("btnReset").textContent = T.clear;
+  $("settingsLbl").textContent = T.settings; $("btnSettings").title = T.settings;
+  $("settingsTitle").textContent = T.settings + " ⚙️";
+  $("langLbl").textContent = T.langLabel;
+  $("clearLbl").textContent = T.clearNote;
+  $("btnSend").textContent = T.send;
+  input.placeholder = T.placeholder;
+  $("hint").textContent = T.hint;
+  $("langSel").title = T.langLabel;
+  $("btnWheel").title = T.navWheel;
+  $("btnRoast").title = T.navRoast;
+  $("testModeLbl").textContent = T.testMode;
+  $("fullAiLbl").textContent = T.fullAi;
+  $("fullAiNote").textContent = T.fullAiNote;
+  $("testModeNote").textContent = T.testModeNote;
+  for (const b of document.querySelectorAll(".xbtn")) b.title = T.close;
+  $("wheelTitle").textContent = T.wheelTitle;
+  $("wheelSub").textContent = T.wheelSub;
+  $("wheelHint").textContent = T.wheelHint;
+  $("roastTitle").textContent = T.roastTitle;
+  $("roastSub").textContent = T.roastSub;
+  $("keyTitle").textContent = T.keyTitle;
+  $("keyBody").textContent = T.keyBody;
+  $("keyInput").placeholder = T.keyPlaceholder;
+  $("keyCancel").textContent = T.close;
+  $("keySave").textContent = T.save;
+  $("introTitle").textContent = T.introTitle;
+  $("introQuota").textContent = T.introQuota;
+  $("introWhy").textContent = T.introWhy;
+  $("introSwitch").textContent = T.introSwitch;
+  $("introReset").textContent = T.introReset;
+  $("introFree").textContent = T.introFree;
+  $("introQuick").textContent = T.introQuick;
+  $("srcClose").textContent = T.close;
+  $("introOk").textContent = T.introStart;
+  $("dontShow").textContent = T.dontShow;
+  if (!chat.querySelector(".msg")) buildWelcome();
+  drawRoast();
+  if (wheelDrawn) drawFlavor();
+  paintQuota();
+}
+
+function buildLangSelect(){
+  const sel = $("langSel");
+  sel.innerHTML = "";
+  for (const [code, pack] of Object.entries(window.I18N)){
+    const o = document.createElement("option");
+    o.value = code; o.textContent = pack.name;
+    sel.appendChild(o);
+  }
+  sel.value = lang;
+  sel.onchange = async () => {
+    lang = sel.value; store("lang", lang); applyLang();
+    try{
+      await fetch("/api/lang", {method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify({lang})});
+    }catch{}
+    refreshStatus();
+  };
+}
+
+// ---------- ป้ายโควตา + ตัวนับถอยหลัง
+function mmss(sec){
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60), s = sec%60;
+  const p = n => String(n).padStart(2,"0");
+  return h ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+}
+function paintQuota(){
+  const el = $("quota"), txt = $("quotaText");
+  if (!quota){ txt.textContent = "…"; return; }
+  el.classList.remove("warn","out");
+  if (noKey){ el.classList.add("out"); txt.textContent = T.noKey; el.title = T.noKey; return; }
+  if (quota.status === "ok"){
+    txt.textContent = T.quotaLeft(quota.questions_left);
+    el.title = T.quotaTipLeft(quota.questions_left,
+                              quota.models.reduce((a,m)=>a+m.used,0), quota.calls_per_question);
+    if (quota.questions_left <= 2) el.classList.add("warn");
+  } else if (quota.status === "cooldown"){
+    el.classList.add("warn");
+    txt.textContent = `${T.quotaWait} ${mmss(quota.wait_seconds)}`;
+    el.title = T.quotaTipWait;
+  } else {
+    el.classList.add("out");
+    txt.textContent = `${T.quotaOut} · ${mmss(quota.seconds_to_reset)}`;
+    el.title = T.quotaTipOut;
+  }
+}
+function startTicker(){
+  if (tick) clearInterval(tick);
+  tick = setInterval(() => {
+    if (!quota) return;
+    if (quota.wait_seconds > 0) quota.wait_seconds--;
+    if (quota.seconds_to_reset > 0) quota.seconds_to_reset--;
+    if (quota.status === "cooldown" && quota.wait_seconds <= 0) refreshQuota();
+    else paintQuota();
+  }, 1000);
+}
+async function refreshQuota(){
+  try{ quota = await (await fetch("/api/quota")).json(); paintQuota(); }catch{}
+}
+
+// ---------- สถานะ
+async function refreshStatus(){
+  try{
+    const s = await (await fetch("/api/status")).json();
+    if (s.quota){ quota = s.quota; paintQuota(); }
+    // ไม่มีคีย์ก็ยังถามคำถามที่ตอบทันทีได้ → ไม่เด้งกล่องคีย์ตอนเปิด รอจนถามเรื่องที่ต้องใช้ AI (need_key)
+    noKey = !s.has_key; paintQuota();
+    if (!s.has_key){ $("status").textContent = T.noKey; return false; }
+    if (s.error){ $("status").textContent = T.problem + s.error; return false; }
+    $("testMode").checked = !!s.test_mode;
+    $("fullAi").checked = !!s.full_ai;
+    $("status").textContent = (s.version ? s.version + " · " : "")
+                            + (s.test_mode ? T.testModeOn : T.kbInfo(s.model, s.chunks, s.mode));
+    return true;
+  }catch{ $("status").textContent = T.noServer; return false; }
+}
+
+// ---------- ข้อความ
+function addMessage(who, html, cls){
+  $("welcome")?.remove();
+  const row = document.createElement("div");
+  row.className = "msg" + (who === "me" ? " me" : "");
+  row.innerHTML = `<div class="avatar">${who === "me" ? "🙂" : "☕"}</div>
+                   <div class="bubble ${cls||""}">${html}</div>`;
+  chat.appendChild(row); scroll();
+  return row.querySelector(".bubble");
+}
+function traceHtml(trace){
+  if (!trace || !trace.length) return "";
+  const items = trace.map(e => `<li><b>${escapeHtml(e.label)}</b> — ${escapeHtml(e.message)}</li>`).join("");
+  return `<details class="trace"><summary>${escapeHtml(T.traceSummary(trace.length))}</summary><ol>${items}</ol></details>`;
+}
+
+// ---------- การ์ดคำตอบ
+// "coffee/brewing.md § Cold Brew" → "brewing › Cold Brew" (ไม่โชว์ชื่อไฟล์/นามสกุลให้ผู้ใช้เห็น)
+const prettySource = l => l.replace(/^[^/]+\//, "").replace(/\.(md|txt) § /, " › ");
+function sourcesHtml(list){
+  if (!list || !list.length) return "";
+  const btns = list.map(l => `<button data-src="${escapeHtml(l)}">${escapeHtml(prettySource(l).replace(/\s*\(.*\)$/, ""))}</button>`).join("");
+  return `<div class="srcs">${escapeHtml(T.sources)} ${btns}</div>`;
+}
+function actionsHtml(question, data){
+  let h = "";
+  if (data.kind === "local" || data.kind === "calc") h += `<button class="ai" data-ask-ai="${escapeHtml(question)}">🤖 ${escapeHtml(T.askAi)}</button>`;
+  if (data.kind === "cache") h += `<button class="ai" data-ask-ai="${escapeHtml(question)}">🤖 ${escapeHtml(T.askAgain)}</button>`;
+  const rel = data.card?.related || [];
+  if (rel.length) h += `<span class="lbl">${escapeHtml(T.related)}</span>` + rel.slice(0, 3).map(q => `<button data-ask="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("");
+  return h ? `<div class="acts">${h}</div>` : "";
+}
+function answerHtml(question, data){
+  const notice = data.notice ? `<div class="notice">⚙︎ ${escapeHtml(data.notice)}</div>` : "";
+  let badge, body;
+  if (data.card){
+    badge = `<span class="badge fast">${escapeHtml(data.kind === "calc" ? T.badgeCalc : T.badgeLocal)}</span>`;
+    body = `<p class="cardtitle">${escapeHtml(data.card.title)}</p><ul>${data.card.lines.map(l => `<li>${escapeHtml(l)}</li>`).join("")}</ul>`;
+  } else {
+    const cacheLabel = data.how === "seed" ? T.badgeSeed : data.how === "similar" ? T.badgeSimilar : T.badgeCache;
+    const label = data.kind === "cache" ? cacheLabel : data.kind === "test" ? T.badgeTest : T.badgeAi(data.model || "");
+    badge = `<span class="badge${data.kind === "ai" ? "" : " fast"}">${escapeHtml(label)}</span>`;
+    body = (data.how === "similar" && data.asked ? `<p class="note" style="color:var(--muted);margin:0 0 6px">“${escapeHtml(data.asked)}”</p>` : "")
+         + render(data.answer);
+  }
+  return notice + badge + body + sourcesHtml(data.card ? data.card.sources : data.sources)
+       + actionsHtml(question, data) + traceHtml(data.trace);
+}
+chat.addEventListener("click", async e => {
+  const b = e.target.closest("button");
+  if (!b || busy) return;
+  if (b.dataset.askAi !== undefined) send(b.dataset.askAi, {forceAi: true});
+  else if (b.dataset.ask !== undefined) send(b.dataset.ask);
+  else if (b.dataset.src !== undefined) openSource(b.dataset.src);
+});
+async function openSource(label){
+  $("srcTitle").textContent = T.srcTitle;
+  $("srcLabel").textContent = prettySource(label);
+  $("srcText").textContent = "…";
+  if (!$("srcDialog").open) $("srcDialog").showModal();
+  try{
+    const r = await (await fetch("/api/source?label=" + encodeURIComponent(label))).json();
+    $("srcText").textContent = r.text || r.error || "";
+  }catch{ $("srcText").textContent = T.noServer; }
+}
+$("srcClose").onclick = () => $("srcDialog").close();
+
+async function send(text, opts = {}){
+  if (busy) return;
+  text = (text ?? input.value).trim();
+  if (!text) return;
+  input.value = ""; autosize();
+  addMessage("me", render(text));
+
+  busy = true; $("btnSend").disabled = true;
+  const bubble = addMessage("bot", `<div class="thinking">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span style="margin-left:4px">${escapeHtml(T.thinking)}</span></div>`);
+  try{
+    const res = await fetch("/api/chat", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({message:text, lang, force_ai: !!opts.forceAi}),
+    });
+    const data = await res.json();
+    if (data.quota){ quota = data.quota; paintQuota(); }
+    if (data.error){
+      bubble.className = "bubble error";
+      bubble.innerHTML = render(data.error) + traceHtml(data.trace);
+      if (data.need_key) openKeyDialog(data.error);
+    } else {
+      bubble.className = "bubble";
+      bubble.innerHTML = answerHtml(text, data);
+      if (data.model) refreshStatus();
+    }
+  }catch{
+    bubble.className = "bubble error";
+    bubble.innerHTML = render(T.noServer);
+  }finally{
+    busy = false; $("btnSend").disabled = false; scroll(); input.focus();
+  }
+}
+
+// ---------- กล่องใส่คีย์
+function openKeyDialog(note){
+  $("keyNote").textContent = note || "";
+  $("keyNote").className = "note" + (note ? " err" : "");
+  if (!$("keyDialog").open) $("keyDialog").showModal();
+  if (note) $("keyInput").focus();                       // เปิดเพราะต้องใส่คีย์ → โฟกัสช่องคีย์เลย
+}
+$("btnSettings").onclick = () => { refreshStatus(); openKeyDialog(""); };
+$("fullAi").onchange = async () => {
+  const on = $("fullAi").checked;
+  store("fullAi", on ? "1" : undefined);
+  try{ await fetch("/api/fullai", {method:"POST", headers:{"Content-Type":"application/json"},
+                                   body: JSON.stringify({on})}); }catch{}
+};
+$("testMode").onchange = async () => {
+  const on = $("testMode").checked;
+  store("testMode", on ? "1" : undefined);
+  try{ await fetch("/api/testmode", {method:"POST", headers:{"Content-Type":"application/json"},
+                                     body: JSON.stringify({on})}); }catch{}
+  refreshStatus();
+};
+$("keyCancel").onclick = () => $("keyDialog").close();
+$("keySave").onclick = async () => {
+  const key = $("keyInput").value.trim();
+  if (!key){ $("keyNote").textContent = T.keyEmpty; $("keyNote").className = "note err"; return; }
+  $("keySave").disabled = true;
+  try{
+    const r = await (await fetch("/api/key", {method:"POST", headers:{"Content-Type":"application/json"},
+                                              body: JSON.stringify({key})})).json();
+    if (r.error){ $("keyNote").textContent = r.error; $("keyNote").className = "note err"; }
+    else {
+      $("keyNote").textContent = T.keySaved; $("keyNote").className = "note ok";
+      $("keyInput").value = "";
+      await refreshStatus();
+      setTimeout(() => $("keyDialog").close(), 600);
+    }
+  } finally { $("keySave").disabled = false; }
+};
+
+// ---------- popup ครั้งแรก
+function showIntro(){
+  const models = quota ? quota.models.length : 4;
+  const limit = quota && quota.models.length ? quota.models[0].limit : 20;
+  const left = quota ? quota.questions_left : "-";
+  $("introLimit").innerHTML = T.introLimit(left, models, limit);
+  $("introDialog").showModal();
+}
+$("introOk").onclick = () => {
+  if ($("introSkip").checked) store("introSeen", "1");
+  $("introDialog").close();
+  input.focus();
+};
+
+$("btnReset").onclick = async () => {
+  if (busy) return;
+  $("keyDialog").close();
+  await fetch("/api/reset", {method:"POST"});
+  chat.innerHTML = ""; showAllChips = false; buildWelcome(); refreshQuota();
+};
+
+// ---------- กล่องพิมพ์
+function autosize(){
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+}
+input.addEventListener("input", autosize);
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); send(); }
+});
+$("btnSend").onclick = () => send();
+
+function buildWelcome(){
+  chat.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "welcome"; div.id = "welcome";
+  div.innerHTML = `<div style="font-size:44px">☕</div>
+    <h1>${escapeHtml(T.welcomeTitle)}</h1>
+    <p>${escapeHtml(T.welcomeSub)}</p><div class="chips"></div>`;
+  chat.appendChild(div);
+  const chips = div.querySelector(".chips");
+  const list = showAllChips ? T.suggestions : T.suggestions.slice(0, CHIPS_SHOWN);
+  list.forEach(q => {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = q;
+    b.onclick = () => send(q);
+    chips.appendChild(b);
+  });
+  if (!showAllChips && T.suggestions.length > CHIPS_SHOWN){
+    const more = document.createElement("button");
+    more.className = "morechips";
+    more.textContent = `+ ${T.suggestions.length - CHIPS_SHOWN}`;
+    more.onclick = () => { showAllChips = true; buildWelcome(); };
+    div.appendChild(more);
+  }
+}
+
+// ---------- เริ่มทำงาน
+(async function init(){
+  lang = load("lang") || "th";
+  if (!window.I18N[lang]) lang = "th";
+  buildLangSelect();
+  applyLang();
+  if (lang !== "th"){
+    try{ await fetch("/api/lang", {method:"POST", headers:{"Content-Type":"application/json"},
+                                   body: JSON.stringify({lang})}); }catch{}
+  }
+  // โหมดทดสอบจำไว้ในเบราว์เซอร์ ส่งให้เซิร์ฟเวอร์ทุกครั้งที่เปิด (เซิร์ฟเวอร์เริ่มใหม่จะลืม)
+  if (load("fullAi") === "1"){
+    try{ await fetch("/api/fullai", {method:"POST", headers:{"Content-Type":"application/json"},
+                                     body: JSON.stringify({on:true})}); }catch{}
+  }
+  if (load("testMode") === "1"){
+    try{ await fetch("/api/testmode", {method:"POST", headers:{"Content-Type":"application/json"},
+                                       body: JSON.stringify({on:true})}); }catch{}
+  }
+  input.focus();
+  await refreshStatus();
+  startTicker();
+  setInterval(refreshQuota, 20000);
+  if (!load("introSeen")) showIntro();
+})();
+</script>
+</body>
+</html>
