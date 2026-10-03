@@ -143,11 +143,46 @@
         calls: parts.filter((p) => p.functionCall).map((p) => p.functionCall) };
     }
 
+    // ------------------------------------------------------------ hybrid RAG: แปลงคำถามเป็นเวกเตอร์ (embeddings.QueryEmbedder)
+    // 1 ครั้ง/คำถามที่ไปถึง AI · ผ่านตัวกลาง (/v1/embed) หรือคีย์ของผู้ใช้ · พลาด = พัก 60 วิ แล้วใช้ BM25 อย่างเดียว
+    const EMBED_MODEL = D.vectors ? D.vectors.model : "";
+    const qmemo = new Map();
+    let embedPauseUntil = 0, embedCalls = 0;
+    async function embedQuery(text) {
+      if (!E.hasVectors() || S.testMode) return null;
+      if (qmemo.has(text)) return qmemo.get(text);
+      if (now() < embedPauseUntil || !canAsk()) return null;
+      const proxy = viaProxy();
+      try {
+        embedCalls += 1;
+        const res = await fetchFn(proxy ? `${proxyUrl}/v1/embed` : `${GEMINI}${EMBED_MODEL}:batchEmbedContents`, {
+          method: "POST", headers: proxy ? { "Content-Type": "application/json" } : { "Content-Type": "application/json", "x-goog-api-key": key() },
+          body: JSON.stringify({ requests: [{ model: `models/${EMBED_MODEL}`, content: { parts: [{ text }] },
+            taskType: "RETRIEVAL_QUERY", outputDimensionality: D.vectors.dim }] }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const v = (await res.json()).embeddings[0].values;
+        const n = Math.sqrt(v.reduce((a, x) => a + x * x, 0)) || 1;
+        const qv = v.map((x) => x / n);
+        if (qmemo.size > 64) qmemo.clear();
+        qmemo.set(text, qv);
+        return qv;
+      } catch {
+        embedPauseUntil = now() + 60_000;
+        return null;
+      }
+    }
+    // ค้นฐานความรู้: hybrid ถ้าได้เวกเตอร์คำถาม ไม่งั้น BM25 (เหมือน Retriever.search)
+    async function searchKb(query, k = 5) {
+      const qv = await embedQuery(query);
+      return (qv && E.hybridSearch(query, qv, k)) || E.search(query, k);
+    }
+
     // ------------------------------------------------------------ agent โหมดประหยัด (agent.py lean)
-    function prefetch(question, sources, trace) {
-      const hits = E.search(E.expandQuery(question), 5);
+    async function prefetch(question, sources, trace) {
+      const hits = await searchKb(E.expandQuery(question), 5);
       for (const h of hits.slice(0, 3)) if (!sources.includes(h.source)) sources.push(h.source);
-      trace("action", `search_domain (ค้นล่วงหน้าในเครื่อง) → ${sources.length} หัวข้อ`);
+      trace("action", `search_domain (ค้นล่วงหน้าในเครื่อง${hits.length && hits[0].mode === "hybrid" ? " · hybrid" : ""}) → ${sources.length} หัวข้อ`);
       if (!hits.length) {
         trace("action", "ค้นล่วงหน้าไม่เจอ → ให้โมเดลค้นเองเป็นภาษาไทย");
         return "<knowledge>\n(no matching passage found — call search_domain with Thai keywords before answering)\n</knowledge>";
@@ -164,7 +199,7 @@
       const sources = [], toolLog = [];
       trace("perception", "input: text");
       trace("organize", "recalled 0 memory item(s), 0 lesson(s)");
-      const evidence = prefetch(question, sources, trace);
+      const evidence = await prefetch(question, sources, trace);
       const plan = E.localPlan(question, sources, langName());
       trace("planning", `(วางแผนในเครื่อง) ${plan.subgoals.length} subgoal(s)`);
       const d = new Date(now());
@@ -184,7 +219,7 @@
           for (const call of r.calls) {
             const q = (call.args && call.args.query) || "";
             trace("action", `search_domain(${JSON.stringify({ query: q })})`);
-            const hits = call.name === "search_domain" ? E.search(E.expandQuery(q), 5) : [];
+            const hits = call.name === "search_domain" ? await searchKb(E.expandQuery(q), 5) : [];
             for (const h of hits.slice(0, 3)) if (!sources.includes(h.source)) sources.push(h.source);
             const content = hits.length ? JSON.stringify(hits) : "ไม่พบข้อมูลที่เกี่ยวข้องในฐานความรู้";
             toolLog.push(`search_domain(${JSON.stringify({ query: q })}) -> ${content.slice(0, 1500)}`);
@@ -207,10 +242,10 @@
       return { answer, sources: sources.slice(0, 4) };
     }
 
-    function mockAnswer(question, trace) {
+    async function mockAnswer(question, trace) {
       const sources = [];
       trace("perception", "input: text");
-      const ev = prefetch(question, sources, trace);
+      const ev = await prefetch(question, sources, trace);
       trace("planning", "(วางแผนในเครื่อง) 3 subgoal(s)");
       const body = ev.split("<knowledge>")[1].split("</knowledge>")[0].trim();
       const lines = body.split("\n\n").filter((b) => /^\[\d+\]/.test(b)).slice(0, 2).map((b) => {
@@ -239,7 +274,7 @@
         if (card) { remember(message, E.asText(card)); return { kind: card.kind, card, quota: snapshot() }; }
       }
       if (S.testMode) {
-        const r = mockAnswer(message, trace);
+        const r = await mockAnswer(message, trace);
         return { kind: "test", answer: r.answer, sources: r.sources, trace: trace.events, model: "mock", quota: snapshot() };
       }
       const fresh = S.stm.length === 0;
@@ -328,7 +363,7 @@
         default: return { error: "not found" };
       }
     }
-    return { handle, chat, snapshot, state: S };
+    return { handle, chat, snapshot, state: S, stats: () => ({ requests, embedCalls }) };
   }
 
   const api = { create };

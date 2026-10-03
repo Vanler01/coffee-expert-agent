@@ -196,6 +196,226 @@
         sources: topic.labels.slice(), related: related(topic, lang) };
     }
 
+    // ------------------------------------------------------------ จับคู่ คั่ว × เมนู × เมล็ด (pairings.py)
+    const PD = D.pairings || null;
+    const PR = PD ? Object.fromEntries(PD.roasts.map((x) => [x.id, x])) : {};
+    const PB = PD ? Object.fromEntries(PD.beans.map((x) => [x.id, x])) : {};
+    const PM = PD ? Object.fromEntries(PD.menus.map((x) => [x.id, x])) : {};
+    const PTAB = { R: PR, B: PB, M: PM };
+    const PRX = PD ? Object.fromEntries(Object.entries(PD.rx).map(([k, p]) => [k, rxI(p)])) : {};
+    const ATTRS = ["acidity", "body", "sweetness"];
+    const latin = (ch) => (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9");
+
+    function pFind(text) {
+      const s = text.toLowerCase();
+      const taken = new Array(s.length).fill(false);
+      let hits = [];
+      for (const [alias, kind, id, weak] of PD.entries) {
+        let start = 0;
+        const lat = [...alias].some(latin);
+        for (;;) {
+          const i = s.indexOf(alias, start);
+          if (i < 0) break;
+          const j = i + alias.length;
+          start = i + 1;
+          if (lat && ((i > 0 && latin(s[i - 1])) || (j < s.length && latin(s[j])))) continue;
+          if (taken.slice(i, j).some(Boolean)) continue;
+          for (let k = i; k < j; k++) taken[k] = true;
+          hits.push([i, kind, id, weak]);
+        }
+      }
+      const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+      hits.sort((a, b) => a[0] - b[0] || cmp(a[1], b[1]) || cmp(a[2], b[2]) || (a[3] - b[3]));
+      if (hits.some((h) => h[3]) && hits.some((h) => h[1] === "bean" && !h[3]))
+        hits = hits.filter((h) => !(h[1] === "bean" && h[3]));
+      const out = { roast: [], bean: [], menu: [] };
+      for (const [, kind, id] of hits) if (!out[kind].includes(id)) out[kind].push(id);
+      return out;
+    }
+    const clamp = (x) => Math.max(1, Math.min(5, x));
+    function afterRoast(b, rid) {
+      const d = PR[rid].d || {};
+      return Object.fromEntries(ATTRS.map((a) => [a, clamp(b[a] + (d[a] || 0))]));
+    }
+    function pScore(rid, mid, bid) {
+      const m = PM[mid], b = PB[bid];
+      if (rid === "green" || mid === "green-coffee-drink") {
+        const ok = rid === "green" && mid === "green-coffee-drink";
+        return { verdict: ok ? "ok" : (rid === "green" ? "green" : "no"), sm: ok ? 2 : 0, sb: 0, fit: 0, total: ok ? 4 : 0, adj: {} };
+      }
+      const sm = m.roast_best.includes(rid) ? 2 : m.roast_ok.includes(rid) ? 1 : 0;
+      const sb = b.roast_best.includes(rid) ? 2 : b.roast_ok.includes(rid) ? 1 : 0;
+      const adj = afterRoast(b, rid);
+      const fit = ATTRS.filter((a) => m.want[a][0] <= adj[a] && adj[a] <= m.want[a][1]).length;
+      const total = 2 * sm + 2 * sb + fit;
+      const verdict = sm === 0 || sb === 0 || fit < 2 ? "no" : total >= 8 ? "best" : total >= 5 ? "ok" : "no";
+      return { verdict, sm, sb, fit, total, adj };
+    }
+    const byTotal = (rows) => rows.sort((a, b) => b[0].total - a[0].total || a[1] - b[1]).map((r) => [r[2], r[0]]);
+    const rankBeans = (mid, rid) => byTotal(PD.beans.map((b, i) => [pScore(rid, mid, b.id), i, b.id]));
+    const bestRoast = (mid, bid) => byTotal(PD.roasts.map((r, i) => [r, i]).filter(([r]) => r.id !== "green")
+      .map(([r, i]) => [pScore(r.id, mid, bid), i, r.id]));
+    const menusFor = (bid, rid) => byTotal(PD.menus.map((m, i) => [m, i]).filter(([m]) => m.id !== "green-coffee-drink")
+      .map(([m, i]) => [rid ? pScore(rid, m.id, bid) : bestRoast(m.id, bid)[0][1], i, m.id]));
+
+    const pT = (lang) => PD.T[lang];
+    const names = (ids, table, lang, limit) => ids.slice(0, limit).map((i) => PTAB[table][i][lang]).join(pT(lang).sep) || pT(lang).none;
+    const shortRoast = (r, lang) => (lang === "th" ? r[lang].split(" (")[0] : r[lang]);
+    const roastList = (ids, lang) => ids.map((i) => shortRoast(PR[i], lang)).join(pT(lang).sep);
+    function beanLists(mid, rid) {
+      const ranked = rankBeans(mid, rid);
+      return [ranked.filter(([, s]) => s.verdict === "best").map(([b]) => b).slice(0, 6),
+        ranked.filter(([, s]) => s.verdict === "ok").map(([b]) => b).slice(0, 4),
+        ranked.slice().reverse().filter(([, s]) => s.verdict === "no").map(([b]) => b).slice(0, 3)];
+    }
+    function want(m, a, lang) {
+      const [lo, hi] = m.want[a], lv = PD.LEVEL[lang];
+      return lo === hi ? lv[lo] : format(pT(lang).range, { a: lv[lo], b: lv[hi] });
+    }
+    function reasons(rid, mid, bid, lang) {
+      const t = pT(lang), m = PM[mid], b = PB[bid];
+      if (rid === "green") return [t.green];
+      const s = pScore(rid, mid, bid);
+      const out = [format(t[`r_menu${s.sm}`], { menu: m[lang], list: roastList(m.roast_best, lang) }),
+        format(t[`r_bean${s.sb}`], { bean: b[lang], list: roastList(b.roast_best, lang) })];
+      for (const a of ATTRS) {
+        const v = s.adj[a], ok = m.want[a][0] <= v && v <= m.want[a][1];
+        out.push(format(t[ok ? "r_attr_ok" : "r_attr_bad"], { attr: PD.ATTR_NAME[lang][a], lv: PD.LEVEL[lang][v], want: want(m, a, lang) }));
+      }
+      return out;
+    }
+    const card = (id, title, lines, sources, lang) => ({ kind: "local", id: `pair:${id}`, title,
+      lines: lines.concat([pT(lang).src_note]), sources, related: [] });
+    const L = PD ? PD.labels : {};
+    const menuLabel = (mid) => L.menu[mid], beanLabel = (bid) => L.bean[bid], roastLabel = (rid) => L.roast[rid];
+
+    function cardMenuRoast(mid, rid, lang) {
+      const t = pT(lang), m = PM[mid], r = PR[rid];
+      const title = format(t.t_menu_roast, { menu: m[lang], roast: r[lang] });
+      if (rid === "green" && mid !== "green-coffee-drink") return card(`${mid}+${rid}`, title, [t.green], [menuLabel(mid), roastLabel(rid)], lang);
+      const sm = m.roast_best.includes(rid) ? 2 : m.roast_ok.includes(rid) ? 1 : 0;
+      const [best, ok, avoid] = beanLists(mid, rid);
+      const lines = [format(t.roast_for_menu, { menu: m[lang], v: PD.VERDICT[lang][sm === 2 ? "best" : sm === 1 ? "ok" : "no"] })];
+      if (sm === 0) lines.push(format(t.r_menu0, { menu: m[lang], list: roastList(m.roast_best, lang) }));
+      lines.push(format(t.best_beans, { list: names(best, "B", lang, 6) }));
+      if (ok.length) lines.push(format(t.ok_beans, { list: names(ok, "B", lang, 4) }));
+      if (avoid.length) lines.push(format(t.avoid_beans, { list: names(avoid, "B", lang, 3) }));
+      lines.push(format(t.why, { why: m[`why_${lang}`] }));
+      return card(`${mid}+${rid}`, title, lines, [menuLabel(mid), roastLabel(rid), L.rule], lang);
+    }
+    function cardTriple(mid, rid, bid, lang) {
+      const t = pT(lang), m = PM[mid], r = PR[rid], b = PB[bid];
+      const s = pScore(rid, mid, bid);
+      const lines = [PD.VERDICT[lang][s.verdict]].concat(reasons(rid, mid, bid, lang));
+      if (s.verdict !== "best") {
+        const top = bestRoast(mid, bid).filter(([, sc]) => sc.verdict === "best").map(([x]) => x).slice(0, 2);
+        if (top.length) lines.push(format(t.roasts_best, { list: roastList(top, lang) }));
+      }
+      lines.push(format(t.why, { why: m[`why_${lang}`] }));
+      return card(`${mid}+${rid}+${bid}`, format(t.t_triple, { bean: b[lang], roast: r[lang], menu: m[lang] }),
+        lines, [menuLabel(mid), beanLabel(bid), roastLabel(rid), L.rule], lang);
+    }
+    function cardPair(mid, bid, lang) {
+      const t = pT(lang), m = PM[mid], b = PB[bid];
+      const ranked = bestRoast(mid, bid);
+      let lines = ranked.filter(([, s]) => s.verdict !== "no")
+        .map(([rid, s]) => format(t.per_roast, { roast: shortRoast(PR[rid], lang), v: PD.VERDICT[lang][s.verdict] })).slice(0, 4);
+      if (!lines.length) {
+        const alt = rankBeans(mid, m.roast_best[0]).filter(([, s]) => s.verdict === "best").map(([x]) => x).slice(0, 4);
+        lines = [PD.VERDICT[lang].no, format(t.r_bean_menu0, { bean: b[lang], menu: m[lang] }),
+          format(t.closest, { roast: shortRoast(PR[ranked[0][0]], lang) })]
+          .concat(reasons(ranked[0][0], mid, bid, lang).map((x) => "· " + x))
+          .concat(alt.length ? [format(t.alt, { menu: m[lang], list: names(alt, "B", lang, 4) })] : []);
+      }
+      lines.push(format(t.why, { why: m[`why_${lang}`] }));
+      return card(`${mid}+${bid}`, format(t.t_pair, { bean: b[lang], menu: m[lang] }), lines, [menuLabel(mid), beanLabel(bid), L.rule], lang);
+    }
+    function menusLines(bid, rid, lang) {
+      const t = pT(lang), ranked = menusFor(bid, rid);
+      const best = ranked.filter(([, s]) => s.verdict === "best").map(([x]) => x);
+      const ok = ranked.filter(([, s]) => s.verdict === "ok").map(([x]) => x);
+      const avoid = ranked.slice().reverse().filter(([, s]) => s.verdict === "no").map(([x]) => x);
+      const out = [format(t.menus_best, { list: names(best, "M", lang, 10) })];
+      if (ok.length) out.push(format(t.menus_ok, { list: names(ok, "M", lang, 5) }));
+      if (avoid.length) out.push(format(t.menus_avoid, { list: names(avoid, "M", lang, 4) }));
+      return out;
+    }
+    function cardBeanRoast(bid, rid, lang) {
+      const t = pT(lang), b = PB[bid], r = PR[rid];
+      let lines;
+      if (rid === "green") lines = [t.green];
+      else {
+        const sb = b.roast_best.includes(rid) ? 2 : b.roast_ok.includes(rid) ? 1 : 0;
+        lines = [format(t[`r_bean${sb}`], { bean: b[lang], list: roastList(b.roast_best, lang) })].concat(menusLines(bid, rid, lang));
+      }
+      return card(`${bid}+${rid}`, format(t.t_bean_roast, { bean: b[lang], roast: r[lang] }), lines, [beanLabel(bid), roastLabel(rid), L.rule], lang);
+    }
+    function profile(b, lang) {
+      const t = pT(lang);
+      const attrs = [...ATTRS, "complexity"].map((a) => `${PD.ATTR_NAME[lang][a]}${lang === "th" ? "" : " "}${PD.LEVEL[lang][b[a]]}`).join(t.sep);
+      return format(t.profile, { kind: PD.KIND[lang][b.kind], attrs });
+    }
+    function cardBean(bid, lang) {
+      const t = pT(lang), b = PB[bid];
+      const lines = [b[`note_${lang}`], profile(b, lang), format(t.flavors, { list: b.flavors.join(", ") }),
+        format(t.roasts_best, { list: roastList(b.roast_best, lang) })].concat(menusLines(bid, null, lang).slice(0, 2));
+      return card(bid, format(t.t_bean, { bean: b[lang] }), lines, [beanLabel(bid), L.rule], lang);
+    }
+    function cardMenu(mid, lang) {
+      const t = pT(lang), m = PM[mid];
+      const rs = (ids) => roastList(ids, lang) || t.none;
+      const lines = [m[`recipe_${lang}`], format(t.roasts_best, { list: rs(m.roast_best) }), format(t.roasts_ok, { list: rs(m.roast_ok) })];
+      for (const rid of m.roast_best.slice(0, 2)) {
+        const [best] = beanLists(mid, rid);
+        lines.push(format(t.per_roast, { roast: shortRoast(PR[rid], lang), v: names(best, "B", lang, 5) }));
+      }
+      lines.push(format(t.why, { why: m[`why_${lang}`] }));
+      return card(mid, format(t.t_menu, { menu: m[lang] }), lines, [menuLabel(mid), L.rule], lang);
+    }
+    function cardRoast(rid, lang) {
+      const t = pT(lang), r = PR[rid];
+      const menus = PD.menus.filter((m) => m.roast_best.includes(rid)).map((m) => m.id);
+      const beans = PD.beans.filter((b) => b.roast_best.includes(rid)).map((b) => b.id);
+      const lines = [r[`note_${lang}`], format(t.menus_best, { list: names(menus, "M", lang, 10) }),
+        format(t.best_beans, { list: names(beans, "B", lang, 10) })];
+      return card(rid, format(t.t_roast, { roast: r[lang] }), lines, [roastLabel(rid), L.rule], lang);
+    }
+    function cardFlavor(flavor, cat, lang) {
+      const t = pT(lang);
+      const beans = PD.beans.filter((b) => b.flavors.includes(flavor)).map((b) => b.id);
+      const lines = [format(t.best_beans, { list: names(beans, "B", lang, 10) })];
+      for (const bid of beans.slice(0, 3)) {
+        const b = PB[bid];
+        lines.push(`${b[lang]}: ` + format(t.roasts_best, { list: roastList(b.roast_best, lang) }));
+      }
+      return card(`flavor:${flavor}`, format(t.t_flavor, { flavor }), lines, [L.flavor[cat]], lang);
+    }
+    const flavorOrder = Object.entries(D.flavor_cat).sort((a, b) => b[0].length - a[0].length || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([n, cat]) => [n, cat, new RegExp(`(?<![A-Za-z])${escapeRe(n)}(?![A-Za-z])`, "i")]);
+    function pairAnswer(text, lang, stage) {
+      if (!PD || !PD.T[lang] || PRX.block.test(text)) return null;
+      const f = pFind(text);
+      if (f.menu.length > 1 || f.roast.length > 1 || f.bean.length > 1) return null;
+      const m = f.menu[0] || null, r = f.roast[0] || null, b = f.bean[0] || null;
+      const wantBean = PRX.bean_q.test(text), wantRoast = PRX.roast_q.test(text);
+      const wantMenu = PRX.menu_q.test(text), wantFit = PRX.fit_q.test(text);
+      if (stage === "early") {
+        if (m && r && b) return cardTriple(m, r, b, lang);
+        if (m && r) return cardMenuRoast(m, r, lang);
+        if (m && b) return cardPair(m, b, lang);
+        if (b && r && (wantMenu || wantFit)) return cardBeanRoast(b, r, lang);
+        if (m && (wantBean || wantRoast)) return cardMenu(m, lang);
+        if (b && !m && !r && (wantMenu || wantRoast)) return cardBean(b, lang);
+        if (r && !m && !b && (wantMenu || wantBean)) return cardRoast(r, lang);
+        return null;
+      }
+      if (b && !m && !r && (wantMenu || wantRoast || wantFit || PRX.flavor_q.test(text))) return cardBean(b, lang);
+      if (!(m || r || b) && wantBean)
+        for (const [n, cat, re] of flavorOrder)
+          if (PD.good_flavors.includes(n) && re.test(text)) return cardFlavor(n, cat, lang);
+      return null;
+    }
+
     // ------------------------------------------------------------ ตอบทันที (quick_answers.answer)
     function matchTopics(text) {
       const hits = T.filter((t) => t.re.test(text));
@@ -209,8 +429,10 @@
       const calc = brewCalc(text, lang);
       if (calc) return calc;
       if (!(QUESTION.test(text) || text.length <= R.short)) return null;
+      const pair = pairAnswer(text, lang, "early");                    // คั่ว × เมนู × เมล็ด
+      if (pair) return pair;
       const hits = matchTopics(text);
-      if (hits.length !== 1) return null;
+      if (hits.length !== 1) return hits.length ? null : pairAnswer(text, lang, "late");
       const t = hits[0];
       if (COMPLEX.test(text) && !t.allow_compare) return null;
       return { kind: "local", id: t.id, title: t.title[lang], lines: t.lines[lang].slice(),
@@ -278,6 +500,39 @@
         source: D.chunks[i].label, text: D.chunks[i].text, score: Math.round(s * 100) / 100, mode: "bm25" }));
     }
 
+    // ------------------------------------------------------------ hybrid RAG (retrieval.Retriever.hybrid_search + embeddings.fuse)
+    // เวกเตอร์ฐานความรู้มาจาก data/kb_vectors.json แต่ย่อเป็น int8 (×127) ใน data.json ให้เว็บโหลดเร็ว → cos ต่างจาก Python ~0.01
+    const VEC = (() => {
+      const v = D.vectors;
+      if (!v || !v.q) return null;
+      const bin = typeof atob === "function" ? atob(v.q) : Buffer.from(v.q, "base64").toString("binary");
+      const out = new Map();
+      v.idx.forEach((ci, n) => {
+        const a = new Float32Array(v.dim);
+        for (let j = 0; j < v.dim; j++) { const b = bin.charCodeAt(n * v.dim + j); a[j] = (b > 127 ? b - 256 : b) / 127; }
+        out.set(D.chunks[ci].label, a);
+      });
+      return out;
+    })();
+    const hasVectors = () => !!VEC;
+    function fuse(bm, cos, k) {
+      const score = new Map();
+      for (const lst of [bm, cos]) lst.forEach(([label], i) => score.set(label, (score.get(label) || 0) + 1 / (D.vectors.rrf_k + i + 1)));
+      const order = [...score.keys()];
+      return order.map((lb, i) => [lb, score.get(lb), i]).sort((a, b) => b[1] - a[1] || a[2] - b[2]).slice(0, k)
+        .map(([lb, sc]) => [lb, Math.round(sc * 1e6) / 1e6]);
+    }
+    // qv = เวกเตอร์ของคำถาม (ได้จาก Gemini/ตัวกลาง) · คืนรูปแบบเดียวกับ search() แต่ mode "hybrid" + cos
+    function hybridSearch(query, qv, k = 5, pool = 10) {
+      if (!VEC || !qv) return null;
+      const bm = search(query, pool).map((h) => [h.source, h.score]);
+      const cos = [...VEC].map(([lb, v]) => { let d = 0; for (let j = 0; j < v.length; j++) d += v[j] * qv[j]; return [lb, d]; })
+        .sort((a, b) => b[1] - a[1]).slice(0, pool);
+      const bmS = new Map(bm), cosS = new Map(cos), by = new Map(D.chunks.map((c) => [c.label, c]));
+      return fuse(bm, cos, k).map(([lb]) => ({ source: lb, text: by.get(lb).text, score: bmS.get(lb) || 0,
+        cos: Math.round((cosS.get(lb) || 0) * 1000) / 1000, mode: "hybrid" }));
+    }
+
     // ------------------------------------------------------------ cache: คำถามคล้ายกัน (answer_cache.py)
     const TAIL = rx(R.tail);
     function normalize(t) {
@@ -329,7 +584,7 @@
     }
 
     return { answer, asText, brewCalc, expandQuery, anchors, search, tokenize, normalize, similarity,
-      localPlan, formatPlan, localCheck, matchTopics, data: D };
+      localPlan, formatPlan, localCheck, matchTopics, pairAnswer, hybridSearch, hasVectors, fuse, data: D };
   }
 
   const api = { create, roundHalfEven, fmt0, fmt1 };
