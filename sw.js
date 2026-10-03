@@ -1,5 +1,5 @@
 // ใช้งานออฟไลน์ได้: เก็บไฟล์ของเว็บไว้ในเครื่อง (ส่วน AI ยังต้องต่อเน็ต) · สร้างโดย web/build.py
-const CACHE = "cea-a4e56f85b6";
+const CACHE = "cea-4251e1647c";
 const FILES = ["./", "apple-touch-icon.png", "backend.js", "data.json", "engine.js", "favicon.svg", "i18n.js", "icon-192.png", "icon-512.png", "icon.svg", "index.html", "k.js", "manifest.webmanifest", "panels.js"];
 self.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (e) => e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())));

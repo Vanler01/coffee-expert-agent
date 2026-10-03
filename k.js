@@ -1,2 +1,2 @@
 // คีย์ Gemini ของเว็บนี้ (ถูกล็อกให้ใช้ได้เฉพาะโดเมนนี้) เก็บกลับด้าน+base64 ไม่ให้เครื่องสแกนคีย์จับ — ไม่ใช่ความลับ
-window.CEA_K = "";
+window.CEA_K = "F9lb61SQHdXTLhka290VoRzM5E3bydTOfZETPd2aQJDR5NVY6lUQ";
