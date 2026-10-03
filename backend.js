@@ -6,7 +6,9 @@
   "use strict";
   const GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/";
 
-  function create({ D, E, fetchFn, store, now = () => Date.now(), bundledKey = "" }) {
+  // proxyUrl = ตัวกลาง Cloudflare Worker (web/worker) ที่เก็บคีย์ไว้ฝั่งเซิร์ฟเวอร์ — เว็บไม่มีคีย์เลย
+  // ผู้ใช้ใส่คีย์ของตัวเองในหน้าตั้งค่าได้ → ใช้คีย์นั้นเรียก Google ตรง (ไม่ผ่านตัวกลาง)
+  function create({ D, E, fetchFn, store, now = () => Date.now(), bundledKey = "", proxyUrl = "" }) {
     const S = {
       lang: "th", testMode: false, stm: [], model: D.model_chain[0],
       get: (k, d) => { try { const v = store.getItem("cea." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -16,6 +18,17 @@
     if (S.get("kb", "") !== D.kb_hash) { S.set("cache", {}); S.set("kb", D.kb_hash); }
     const userKey = () => S.get("key", "");
     const key = () => userKey() || bundledKey;
+    const viaProxy = () => !userKey() && !!proxyUrl;
+    const canAsk = () => viaProxy() || !!key();
+    // ตัวนับรวมของทุกคนจากตัวกลาง (GET /v1/quota) — ใช้แทนตัวนับในเครื่องเมื่อถามผ่านตัวกลาง
+    let shared = null, sharedSkew = 0;
+    async function refreshShared() {
+      if (!viaProxy()) return;
+      try {
+        const r = await fetchFn(`${proxyUrl}/v1/quota`);
+        if (r.ok) { shared = await r.json(); sharedSkew = (shared.now || now()) - now(); }
+      } catch { /* ออฟไลน์ ก็ใช้ค่าล่าสุดที่มี */ }
+    }
     const langName = () => D.languages[S.lang] || D.languages.th;
 
     // ------------------------------------------------------------ โควตา (quota.py) — นับเฉพาะเครื่องนี้
@@ -24,9 +37,14 @@
     function Q() {
       let q = S.get("quota", null);
       if (!q || q.day !== today()) q = { day: today(), used: {}, limit: Object.assign({}, (q && q.limit) || {}), cool: {}, questions: 0, calls: 0 };
+      if (viaProxy() && shared) {        // ใช้ตัวเลขรวมทุกคน · cool เป็นเวลาของเครื่องตัวกลาง → ปรับเวลาให้ตรงเครื่องนี้
+        const cool = {};
+        for (const [m, t] of Object.entries(shared.cool || {})) cool[m] = t - sharedSkew;
+        return Object.assign({}, q, { used: shared.used || {}, limit: Object.assign({}, q.limit, shared.limit || {}), cool });
+      }
       return q;
     }
-    const saveQ = (q) => S.set("quota", q);
+    const saveQ = (q) => { if (!(viaProxy() && shared)) S.set("quota", q); else { const l = S.get("quota", null) || q; l.questions = q.questions; l.calls = q.calls; l.day = today(); S.set("quota", l); } };
     const coolLeft = (q, m) => Math.max(0, Math.floor(((q.cool[m] || 0) - now()) / 1000));
     const available = (m) => { const q = Q(); return coolLeft(q, m) === 0 && (q.used[m] || 0) < (q.limit[m] || DAILY); };
     function recordCalls(m, n) { if (n > 0) { const q = Q(); q.used[m] = (q.used[m] || 0) + n; saveQ(q); } }
@@ -51,7 +69,8 @@
       const waits = models.filter((m) => m.cooldown_seconds > 0 && m.calls_left > 0).map((m) => m.cooldown_seconds);
       return { status, models, questions_left: Math.floor(callsLeft / perQ), calls_left: callsLeft,
         calls_per_question: Math.round(perQ * 10) / 10, questions_asked: q.questions,
-        wait_seconds: waits.length ? Math.min(...waits) : 0, seconds_to_reset: secondsToPacificMidnight(), per_device: true };
+        wait_seconds: waits.length ? Math.min(...waits) : 0, seconds_to_reset: secondsToPacificMidnight(),
+        per_device: !(viaProxy() && shared) };
     }
 
     // ------------------------------------------------------------ cache (answer_cache.py)
@@ -85,8 +104,9 @@
       requests += 1;
       let res;
       try {
-        res = await fetchFn(`${GEMINI}${encodeURIComponent(model)}:generateContent`, {
-          method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key() },
+        const proxy = viaProxy();
+        res = await fetchFn(proxy ? `${proxyUrl}/v1/generate/${encodeURIComponent(model)}` : `${GEMINI}${encodeURIComponent(model)}:generateContent`, {
+          method: "POST", headers: proxy ? { "Content-Type": "application/json" } : { "Content-Type": "application/json", "x-goog-api-key": key() },
           body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents,
             tools: [{ functionDeclarations: [{ name: "search_domain", description: D.tool.description,
               parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } }] }] }),
@@ -95,6 +115,7 @@
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         const err = body.error || {}, msg = err.message || `HTTP ${res.status}`;
+        if (String(err.status || "").startsWith("CEA_")) throw new ApiError("proxy", msg);   // ข้อความจากตัวกลาง (เพดาน IP ฯลฯ) — ไม่สลับรุ่น
         if (res.status === 429) {
           let retry = null, value = null, perDay = false;
           for (const d of err.details || []) {
@@ -236,8 +257,9 @@
             cached_at: e.at || 0, asked: e.question || "", quota: snapshot() };
         }
       }
-      if (!key()) return { error: "ยังไม่มี API key ของ Gemini — ใส่คีย์ได้ที่ ตั้งค่า ⚙️ (ขอฟรีที่ aistudio.google.com) · คำถามที่ตอบในเครื่องยังใช้ได้", need_key: true, trace: trace.events };
+      if (!canAsk()) return { error: "ยังไม่มี API key ของ Gemini — ใส่คีย์ได้ที่ ตั้งค่า ⚙️ (ขอฟรีที่ aistudio.google.com) · คำถามที่ตอบในเครื่องยังใช้ได้", need_key: true, trace: trace.events };
 
+      await refreshShared();                                // รู้ก่อนว่ารุ่นไหนคนอื่นใช้โควตาหมดแล้ว
       const base = [S.model].concat(D.model_chain.filter((m) => m !== S.model));
       const chain = base.filter(available).length ? base.filter(available) : base;
       const tried = [], exhausted = [];
@@ -251,6 +273,7 @@
           recordCalls(model, calls); recordQuestion(total); clearCool(model);
           S.model = model;
           if (fresh) cachePut(message, r.answer, r.sources, model);
+          await refreshShared();
           remember(message, r.answer);
           const out = { kind: "ai", answer: r.answer, sources: r.sources, calls: total, trace: trace.events, model, quota: snapshot() };
           if (tried.length > 1) out.notice = `รุ่นแรกไม่ว่าง เปลี่ยนไปใช้ ${model} ให้อัตโนมัติ`;
@@ -260,6 +283,7 @@
           if (e.type === "overloaded") { recordRate(model, D.overload_pause, null, false); trace("fallback", `${model} คนใช้แน่น ลองรุ่นถัดไป`); continue; }
           if (e.type === "rate") { recordRate(model, e.retry, e.value, e.perDay); exhausted.push(model); trace("fallback", `${model} โควตาหมด ลองรุ่นถัดไป`); continue; }
           if (e.type === "auth") return { error: e.message, need_key: true, trace: trace.events };
+          if (e.type === "proxy") return { error: e.message, trace: trace.events, quota: snapshot() };
           if (e.type === "connection") return { error: `เชื่อมต่อไม่ได้: ${e.message} — ตรวจว่าเครื่องต่ออินเทอร์เน็ตอยู่`, trace: trace.events };
           if (e.type === "refusal") return { error: `โมเดลปฏิเสธคำขอนี้: ${e.message}`, trace: trace.events };
           return { error: e.message || String(e), trace: trace.events };
@@ -274,11 +298,11 @@
     // ------------------------------------------------------------ API แบบเดียวกับ server.py
     async function handle(path, body, params) {
       switch (path) {
-        case "status": return { has_key: S.testMode || !!key(), provider: "gemini", model: S.model, domain: "coffee",
+        case "status": await refreshShared(); return { has_key: S.testMode || canAsk(), provider: "gemini", model: S.model, domain: "coffee",
           chunks: D.chunks.length, mode: "bm25", error: "", lang: S.lang, languages: D.languages, quota: snapshot(),
           quick_topics: D.topics.length, cached_answers: Object.keys(S.get("cache", {})).length,
           seeded_answers: Object.keys(D.seeds).length, test_mode: S.testMode, full_ai: false, version: `${D.version} (${D.version_date})` };
-        case "quota": return snapshot();
+        case "quota": await refreshShared(); return snapshot();
         case "chat": {
           const m = String(body.message || "").trim();
           if (!m) return { error: "ยังไม่ได้พิมพ์คำถาม" };
@@ -314,11 +338,12 @@
   // ------------------------------------------------------------ ต่อเข้ากับหน้าเว็บ (เฉพาะในเบราว์เซอร์)
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const realFetch = window.fetch.bind(window);
-  const k = String(window.CEA_K || "");
-  const bundledKey = k ? atob(k.split("").reverse().join("")) : "";      // เก็บแบบกลับด้าน+base64 กันเครื่องสแกนคีย์ (ไม่ใช่การเข้ารหัส)
+  // ไม่มีคีย์ในเว็บแล้ว (คีย์ที่ฝังในเว็บสาธารณะถูก Google ลบอัตโนมัติ) — ถามผ่านตัวกลาง window.CEA_PROXY (cfg.js)
+  const proxyUrl = String(window.CEA_PROXY || "").replace(/\/+$/, "");
+  const bundledKey = "";
   const ready = realFetch("data.json", { cache: "no-cache" }).then((r) => r.json()).then((D) => {
     const E = root.CoffeeEngine.create(D);
-    return { D, B: create({ D, E, fetchFn: realFetch, store: window.localStorage, bundledKey }) };
+    return { D, B: create({ D, E, fetchFn: realFetch, store: window.localStorage, bundledKey, proxyUrl }) };
   });
   const json = (obj) => new Response(JSON.stringify(obj), { headers: { "Content-Type": "application/json" } });
   window.fetch = async function (input, init) {
@@ -338,14 +363,19 @@
   };
 
   // ปรับหน้าเว็บเล็กน้อยสำหรับเว็บเวอร์ชัน (ไม่แตะไฟล์ index.html ของแอปคอม)
+  // ตัวนับ: ผ่านตัวกลาง = รวมทุกคน (realtime) · ใช้คีย์ตัวเอง = นับเฉพาะเครื่องนี้ (มี *)
   const NOTE = {
-    th: "นับเฉพาะเครื่องนี้ — ถ้าหลายคนใช้คีย์เดียวกัน โควตาจริงอาจเหลือน้อยกว่านี้ (Google ไม่มีบริการบอกโควตาที่เหลือ)",
-    en: "Counted on this device only — if several people share the key, the real remaining quota may be lower",
+    shared: { th: "รวมทุกคนที่ใช้เว็บนี้วันนี้ (นับที่ตัวกลาง แบบ realtime)", en: "Shared by everyone using this site today (counted at the proxy, real time)" },
+    device: { th: "นับเฉพาะเครื่องนี้ (ใช้คีย์ของตัวเอง)", en: "Counted on this device only (your own key)" },
   };
+  const isShared = () => { try { return !!proxyUrl && !localStorage.getItem("cea.key"); } catch { return !!proxyUrl; } };
   if (window.I18N) for (const [code, T] of Object.entries(window.I18N)) {
-    const note = NOTE[code] || NOTE.en, orig = T.quotaTipLeft;
-    if (typeof orig === "function") T.quotaTipLeft = (...a) => `${orig(...a)} · ${note}`;
-    if (typeof T.quotaLeft === "function") { const o = T.quotaLeft; T.quotaLeft = (n) => `${o(n)}*`; }
+    const orig = T.quotaTipLeft, o = T.quotaLeft;
+    if (typeof orig === "function") T.quotaTipLeft = (...a) => {
+      const n = NOTE[isShared() ? "shared" : "device"];
+      return `${orig(...a)} · ${n[code] || n.en}`;
+    };
+    if (typeof o === "function") T.quotaLeft = (n) => `${o(n)}${isShared() ? "" : "*"}`;
   }
   document.addEventListener("DOMContentLoaded", () => {
     for (const id of ["fullAi", "fullAiNote"]) {          // โหมด AI เต็มรูปแบบมีเฉพาะแอปคอม
