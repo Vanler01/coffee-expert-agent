@@ -355,16 +355,72 @@
       const attrs = [...ATTRS, "complexity"].map((a) => `${PD.ATTR_NAME[lang][a]}${lang === "th" ? "" : " "}${PD.LEVEL[lang][b[a]]}`).join(t.sep);
       return format(t.profile, { kind: PD.KIND[lang][b.kind], attrs });
     }
+    const IMG = PD ? PD.IMG || {} : {};
+    const lookLine = (id, lang) => (IMG[id] && IMG[id][`look_${lang}`] ? [format(pT(lang).look, { look: IMG[id][`look_${lang}`] })] : []);
+    function cardLook(kind, id, lang) {
+      const it = IMG[id];
+      if (!it || !it[`look_${lang}`]) return null;
+      const t = pT(lang), x = kind === "menu" ? PM[id] : PB[id];
+      const lines = [it[`look_${lang}`],
+        it.file && it[`subject_${lang}`] ? format(t.photo, { subject: it[`subject_${lang}`] }) : format(t.no_photo, { reason: (it.reason || "—").split(" (")[0] }),
+        kind === "menu" ? x[`recipe_${lang}`] : x[`note_${lang}`]];
+      return card(`look:${id}`, format(t.t_look, { name: x[lang] }), lines, [kind === "menu" ? menuLabel(id) : beanLabel(id)], lang);
+    }
+    // รูปที่แนบกับคำตอบ (pairings.images_for)
+    let labelId = null;
+    function answerIds(question, cardObj, sources, limit = 3) {
+      if (!PD) return [];
+      let ids = [];
+      const cid = (cardObj && cardObj.id) || "";
+      if (cid.startsWith("pair:")) {
+        const rest = cid.slice(5);
+        if (rest.startsWith("flavor:")) {
+          const fl = rest.slice(7);
+          ids = ids.concat(PD.beans.filter((b) => b.flavors.includes(fl)).map((b) => b.id).slice(0, limit));
+        } else ids = ids.concat((rest.startsWith("look:") ? rest.slice(5) : rest).split("+").filter((x) => PM[x] || PB[x]));
+      } else if (!cardObj) {
+        const f = pFind(question);
+        ids = ids.concat(f.menu, f.bean);
+      }
+      if (!labelId) labelId = new Map([...PD.menus.map((m) => [menuLabel(m.id), m.id]), ...PD.beans.map((b) => [beanLabel(b.id), b.id])]);
+      for (const sl of sources || []) if (labelId.has(sl)) ids.push(labelId.get(sl));
+      return [...new Set(ids)];
+    }
+    // World Coffee Research สงวนลิขสิทธิ์รูป → ลิงก์ให้เปิดดูที่เว็บเจ้าของ (pairings.photo_links)
+    function photoLinks(ids, limit = 2) {
+      const out = [];
+      for (const i of ids) {
+        const b = PB[i];
+        const url = b && b.sources.find((u) => u.startsWith("https://varieties.worldcoffeeresearch.org/"));
+        if (url) out.push({ id: i, name_th: b.th, name_en: b.en, site: "World Coffee Research", url });
+        if (out.length >= limit) break;
+      }
+      return out;
+    }
+    function imagesFor(question, cardObj, sources, limit = 3) {
+      if (!PD || !Object.keys(IMG).length) return [];
+      const out = [], seen = new Set();
+      for (const i of answerIds(question, cardObj, sources, limit)) {
+        const it = IMG[i];
+        if (seen.has(i) || !it || !it.file) continue;
+        seen.add(i);
+        out.push({ id: i, kind: it.kind, file: it.file, width: it.width ?? null, height: it.height ?? null,
+          subject_th: it.subject_th || "", subject_en: it.subject_en || "", credit: it.credit || "", license: it.license || "",
+          license_url: it.license_url ?? null, source_page: it.source_page || "" });
+        if (out.length >= limit) break;
+      }
+      return out;
+    }
     function cardBean(bid, lang) {
       const t = pT(lang), b = PB[bid];
-      const lines = [b[`note_${lang}`], profile(b, lang), format(t.flavors, { list: b.flavors.join(", ") }),
+      const lines = [b[`note_${lang}`], ...lookLine(bid, lang), profile(b, lang), format(t.flavors, { list: b.flavors.join(", ") }),
         format(t.roasts_best, { list: roastList(b.roast_best, lang) })].concat(menusLines(bid, null, lang).slice(0, 2));
       return card(bid, format(t.t_bean, { bean: b[lang] }), lines, [beanLabel(bid), L.rule], lang);
     }
     function cardMenu(mid, lang) {
       const t = pT(lang), m = PM[mid];
       const rs = (ids) => roastList(ids, lang) || t.none;
-      const lines = [m[`recipe_${lang}`], format(t.roasts_best, { list: rs(m.roast_best) }), format(t.roasts_ok, { list: rs(m.roast_ok) })];
+      const lines = [m[`recipe_${lang}`], ...lookLine(mid, lang), format(t.roasts_best, { list: rs(m.roast_best) }), format(t.roasts_ok, { list: rs(m.roast_ok) })];
       for (const rid of m.roast_best.slice(0, 2)) {
         const [best] = beanLists(mid, rid);
         lines.push(format(t.per_roast, { roast: shortRoast(PR[rid], lang), v: names(best, "B", lang, 5) }));
@@ -400,6 +456,10 @@
       const wantBean = PRX.bean_q.test(text), wantRoast = PRX.roast_q.test(text);
       const wantMenu = PRX.menu_q.test(text), wantFit = PRX.fit_q.test(text);
       if (stage === "early") {
+        if (PRX.look_q.test(text) && !r && !!m !== !!b) {
+          const c = cardLook(m ? "menu" : "bean", m || b, lang);
+          if (c) return c;
+        }
         if (m && r && b) return cardTriple(m, r, b, lang);
         if (m && r) return cardMenuRoast(m, r, lang);
         if (m && b) return cardPair(m, b, lang);
@@ -584,7 +644,7 @@
     }
 
     return { answer, asText, brewCalc, expandQuery, anchors, search, tokenize, normalize, similarity,
-      localPlan, formatPlan, localCheck, matchTopics, pairAnswer, hybridSearch, hasVectors, fuse, data: D };
+      localPlan, formatPlan, localCheck, matchTopics, pairAnswer, imagesFor, answerIds, photoLinks, hybridSearch, hasVectors, fuse, data: D };
   }
 
   const api = { create, roundHalfEven, fmt0, fmt1 };

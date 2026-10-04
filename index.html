@@ -100,6 +100,12 @@
   }
   .badge.fast{color:var(--ok)}
   .cardtitle{font-weight:700; margin:0 0 4px}
+  .pics{display:flex; flex-wrap:wrap; gap:10px; margin-top:10px}
+  .pic{margin:0; flex:1 1 200px; max-width:320px}
+  .pic img{display:block; width:100%; height:auto; max-height:240px; object-fit:cover; border-radius:10px; background:var(--panel)}
+  .pic figcaption{font-size:11px; color:var(--muted); margin-top:4px; line-height:1.4}
+  .pic figcaption a{color:inherit}
+  .plink{font-size:11.5px; padding:3px 9px; border-radius:999px; color:var(--brand); background:var(--panel); text-decoration:none}
   .srcs{margin-top:10px; font-size:12px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center}
   .srcs button{font-size:11.5px; padding:3px 9px; border-radius:999px; color:var(--brand); background:var(--panel)}
   .acts{margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; align-items:center}
@@ -606,6 +612,26 @@ function sourcesHtml(list){
   const btns = list.map(l => `<button data-src="${escapeHtml(l)}">${escapeHtml(prettySource(l).replace(/\s*\(.*\)$/, ""))}</button>`).join("");
   return `<div class="srcs">${escapeHtml(T.sources)} ${btns}</div>`;
 }
+// รูปเมล็ด/เมนู (Wikimedia Commons) โหลดจาก Cloudflare เฉพาะตอนแสดง · ออฟไลน์/โหลดไม่ได้ = ซ่อนรูป เหลือเครดิต
+// ใต้รูปต้องมี ผู้ถ่าย · สัญญาอนุญาต · ลิงก์ต้นฉบับ · บอกว่าย่อขนาด (เงื่อนไขของ CC BY / CC BY-SA)
+function imagesHtml(list){
+  if (!list || !list.length) return "";
+  const figs = list.map(im => {
+    const subj = (lang === "th" ? im.subject_th : im.subject_en) || im.subject_en || "";
+    const lic = im.license_url ? `<a href="${escapeHtml(im.license_url)}" target="_blank" rel="noopener">${escapeHtml(im.license)}</a>` : escapeHtml(im.license);
+    return `<figure class="pic"><a href="${escapeHtml(im.source_page)}" target="_blank" rel="noopener">`
+      + `<img src="${escapeHtml(im.url)}" alt="${escapeHtml(subj)}" loading="lazy" width="${im.width || ""}" height="${im.height || ""}" onerror="this.closest('a').remove()"></a>`
+      + `<figcaption>${escapeHtml(subj)}<br>${escapeHtml(T.photoBy)}: ${escapeHtml(im.credit || "—")} · ${lic} · `
+      + `<a href="${escapeHtml(im.source_page)}" target="_blank" rel="noopener">Wikimedia Commons</a> (${escapeHtml(T.resized)})</figcaption></figure>`;
+  }).join("");
+  return `<div class="pics">${figs}</div>`;
+}
+// รูปที่สงวนลิขสิทธิ์ (World Coffee Research) ไม่ได้เก็บเอง → ลิงก์ให้เปิดดูที่เว็บเจ้าของ
+function photoLinksHtml(list){
+  if (!list || !list.length) return "";
+  return `<div class="srcs">📷 ${escapeHtml(T.morePhotos)} ` + list.map(l =>
+    `<a class="plink" href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml((lang === "th" ? l.name_th : l.name_en).replace(/\s*\(.*\)$/, ""))} · ${escapeHtml(l.site)} ↗</a>`).join("") + `</div>`;
+}
 function actionsHtml(question, data){
   let h = "";
   if (data.kind === "local" || data.kind === "calc") h += `<button class="ai" data-ask-ai="${escapeHtml(question)}">🤖 ${escapeHtml(T.askAi)}</button>`;
@@ -627,7 +653,7 @@ function answerHtml(question, data){
     body = (data.how === "similar" && data.asked ? `<p class="note" style="color:var(--muted);margin:0 0 6px">“${escapeHtml(data.asked)}”</p>` : "")
          + render(data.answer);
   }
-  return notice + badge + body + sourcesHtml(data.card ? data.card.sources : data.sources)
+  return notice + badge + body + imagesHtml(data.images) + photoLinksHtml(data.photo_links) + sourcesHtml(data.card ? data.card.sources : data.sources)
        + actionsHtml(question, data) + traceHtml(data.trace);
 }
 chat.addEventListener("click", async e => {

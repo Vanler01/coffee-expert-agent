@@ -267,7 +267,16 @@
       return fn;
     }
 
+    // แนบรูป (Cloudflare) กับทุกคำตอบ — เหมือน server.Session.chat
     async function chat(message, forceAi) {
+      const r = await chatInner(message, forceAi);
+      if (!r.error) {
+        r.images = E.imagesFor(message, r.card || null, r.sources || []).map((im) => ({ ...im, url: D.image_base + im.file }));
+        r.photo_links = E.photoLinks(E.answerIds(message, r.card || null, r.sources || []));
+      }
+      return r;
+    }
+    async function chatInner(message, forceAi) {
       const trace = makeTrace();
       if (!forceAi) {
         const card = E.answer(message, S.lang);
