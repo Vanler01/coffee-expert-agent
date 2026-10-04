@@ -391,9 +391,8 @@
     function photoLinks(ids, limit = 2) {
       const out = [];
       for (const i of ids) {
-        const b = PB[i];
-        const url = b && b.sources.find((u) => u.startsWith("https://varieties.worldcoffeeresearch.org/"));
-        if (url) out.push({ id: i, name_th: b.th, name_en: b.en, site: "World Coffee Research", url });
+        const mp = IMG[i] && IMG[i].more_photos, x = PM[i] || PB[i];
+        if (mp && x) out.push({ id: i, name_th: x.th, name_en: x.en, site: mp.site, url: mp.url });
         if (out.length >= limit) break;
       }
       return out;
