@@ -380,10 +380,11 @@
         } else ids = ids.concat((rest.startsWith("look:") ? rest.slice(5) : rest).split("+").filter((x) => PM[x] || PB[x]));
       } else if (!cardObj) {
         const f = pFind(question);
-        ids = ids.concat(f.menu, f.bean);
+        if (f.menu.length || f.bean.length) return [...new Set(f.menu.concat(f.bean))];   // คำถามระบุชื่อ → แนบเฉพาะที่ถาม
       }
       if (!labelId) labelId = new Map([...PD.menus.map((m) => [menuLabel(m.id), m.id]), ...PD.beans.map((b) => [beanLabel(b.id), b.id])]);
-      for (const sl of sources || []) if (labelId.has(sl)) ids.push(labelId.get(sl));
+      const found = (sources || []).filter((sl) => labelId.has(sl)).map((sl) => labelId.get(sl));
+      ids = ids.concat(cardObj ? found : found.slice(0, 1));
       return [...new Set(ids)];
     }
     // World Coffee Research สงวนลิขสิทธิ์รูป → ลิงก์ให้เปิดดูที่เว็บเจ้าของ (pairings.photo_links)
