@@ -434,6 +434,14 @@
       a.style.cssText = "display:block;font-size:13px;margin:-6px 0 14px";
       status.insertAdjacentElement("afterend", a);
     }
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    if ("serviceWorker" in navigator) {
+      // มีเวอร์ชันใหม่มาคุมหน้าแทนตัวเก่า → รีโหลด 1 ครั้งให้ได้หน้าใหม่ทันที (ไม่ต้องรอเปิดรอบหน้า)
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (hadController && !reloaded) { reloaded = true; location.reload(); }
+      });
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
+    }
   });
 })(typeof globalThis !== "undefined" ? globalThis : this);
