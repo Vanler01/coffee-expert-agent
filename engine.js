@@ -12,6 +12,15 @@
     if (Math.abs(d - 0.5) < 1e-9) return f % 2 === 0 ? f : f + 1;
     return Math.round(x);
   }
+  // round(x, nd) / f"{x:.{nd}f}" ของ Python: ปัดจากค่าจริงของ float (เหมือน toFixed) แต่ถ้าเสมอกันพอดี (เช่น 0.625) ไปเลขคู่
+  function pyFixed(x, nd) {
+    const s = x.toFixed(nd), full = Math.abs(x).toFixed(100);
+    const dot = full.indexOf("."), tail = full.slice(dot + 1 + nd);
+    if (!/^50*$/.test(tail)) return s;
+    const kept = full.slice(0, dot + 1 + nd).replace(/\.$/, "");
+    return Number(kept.slice(-1)) % 2 === 0 ? (x < 0 ? "-" : "") + kept : s;
+  }
+  const pyRound = (x, nd) => Number(pyFixed(x, nd));
   function fmt0(x) { return String(roundHalfEven(x)); }
   function fmt1(x) {
     const v = roundHalfEven(x * 10) / 10;
@@ -476,6 +485,189 @@
       return null;
     }
 
+    // ------------------------------------------------------------ v8 ตอบ 2 จังหวะ (verdict.py) — ต้องตรงกับ Python ทุกข้อ
+    const VD = D.verdict || null;
+    const VRX = VD ? Object.fromEntries(Object.entries(VD.rx).map(([k, p]) => [k, rxI(p)])) : {};
+    const VLINE = VD ? rxI(VD.vline) : null, ST_NO = VD ? rxI(VD.stance_no) : null, ST_YES = VD ? rxI(VD.stance_yes) : null;
+    const FIRST_SPLIT = VD ? pyRe(VD.first_split, "") : null;
+    const VYES = new Set(VD ? VD.yes : []), VNO = new Set(VD ? VD.no : []);
+    const vT = (lang) => VD.T[lang in VD.T ? lang : "en"];
+    const vlg = (lang) => (VD && lang in VD.T ? lang : "en");
+
+    function classify(text) {
+      const t = collapse(text);
+      const closed = VRX.closed.test(t) && !VRX.wh.test(t);
+      return { type: closed ? "closed" : "open", reason: VRX.reason.test(t), negated: VRX.negated.test(t) };
+    }
+    function otherFamily(text, bid) {
+      const s = text.toLowerCase(), full = (PB[bid].th + " " + PB[bid].en).toLowerCase();
+      return PD.entries.some(([alias, , , weak]) => weak && s.includes(alias) && !full.includes(alias));
+    }
+    function contested(bean, menu, roast) {
+      const have = { bean, menu, roast };
+      for (const rule of VD.contested || []) {
+        const dims = ["bean", "menu", "roast"].filter((k) => k in rule);
+        if (dims.length && dims.every((k) => rule[k].includes(have[k]))) return rule;
+      }
+      return null;
+    }
+    function weakIds(text) {
+      const s = text.toLowerCase(), out = new Set();
+      for (const [alias, , id, weak] of PD.entries) if (weak && s.includes(alias)) out.add(id);
+      return out;
+    }
+    function trust(...items) {
+      const vals = items.filter((x) => x != null).map((x) => Math.min(1, (x.sources || []).length / 2));
+      return vals.length ? pyRound(vals.reduce((a, b) => a + b, 0) / vals.length, 3) : 0;
+    }
+    function margin(sc) {
+      if (sc.verdict === "green" || sc.sm === 0 || sc.sb === 0) return 1;
+      if (sc.fit < 2) return pyRound((2 - sc.fit) / 2, 3);
+      return pyRound(Math.min(1, Math.abs(sc.total - 4.5) / 6.5), 3);
+    }
+    function vFields(fx, lang) {
+      const t = VD.T[lang], out = {};
+      const name = (tbl, id) => PTAB[tbl][id][lang].split(" (")[0];
+      if (fx.bean) out[t.field.bean] = name("B", fx.bean);
+      if (fx.menu) out[t.field.menu] = name("M", fx.menu);
+      if (fx.roast) out[t.field.roast] = name("R", fx.roast);
+      if (fx.best_roast) out[t.field[VNO.has(fx.stance) ? "near_roast" : "best_roast"]] = name("R", fx.best_roast);
+      const v = PD.VERDICT[lang][fx.stance], sp = v.indexOf(" ");
+      out[t.field.result] = sp < 0 ? v : v.slice(sp + 1);
+      return out;
+    }
+    function facts(text, lang = "th") {
+      if (!PD) return null;
+      const f = pFind(text);
+      const ms = f.menu, rs = f.roast, bs = f.bean;
+      let many = ms.length > 1 || rs.length > 1 || bs.length > 1;
+      const m = ms[0] || null, r = rs[0] || null, b = bs[0] || null;
+      if ([m, r, b].filter((x) => x !== null).length < 2) return null;
+      const lg = vlg(lang);
+      const wk = weakIds(text);
+      const weak = [m, r, b].some((x) => x && wk.has(x));
+      if (b && !weak && otherFamily(text, b)) many = true;      // "เคนยากับเอธิโอเปีย" = 2 เมล็ด (verdict._other_family)
+      let s = weak ? 0.6 : 1.0;
+      if (many) s = 0.3;
+      const menu = m ? PM[m] : null, bean = b ? PB[b] : null;
+      const out = { bean: b, menu: m, roast: r, best_roast: null, conflict: "", contested: "" };
+      const rule = contested(b, m, r);
+      if (rule) out.contested = rule[`why_${lg}`] || rule.why_en || "";
+      let stance, mg;
+      if (m && b) {
+        let sc;
+        if (r) sc = pScore(r, m, b);
+        else [out.best_roast, sc] = bestRoast(m, b)[0];
+        stance = sc.verdict; mg = margin(sc);
+        if (sc.verdict === "no" && sc.sm === 2 && sc.sb === 2) out.conflict = VD.T[lg].conflict_lists;
+      } else if (m && r) {
+        let sm = menu.roast_best.includes(r) ? 2 : menu.roast_ok.includes(r) ? 1 : 0;
+        if (r === "green" || m === "green-coffee-drink") sm = r === "green" && m === "green-coffee-drink" ? 2 : 0;
+        stance = { 2: "best", 1: "ok", 0: r === "green" ? "green" : "no" }[sm];
+        mg = { 2: 1.0, 1: 0.5, 0: 0.8 }[sm];
+      } else if (r === "green") {
+        stance = "green"; mg = 1.0;
+      } else {
+        const sb = bean.roast_best.includes(r) ? 2 : bean.roast_ok.includes(r) ? 1 : 0;
+        stance = { 2: "best", 1: "ok", 0: "no" }[sb];
+        mg = { 2: 1.0, 1: 0.5, 0: 0.8 }[sb];
+      }
+      Object.assign(out, { stance, s, margin: mg, m: 1.0, t: trust(menu, bean), clear: !many && !weak });
+      out.fields = vFields(out, lg);
+      out.sources = [...(m ? [menuLabel(m)] : []), ...(b ? [beanLabel(b)] : []), ...(r ? [roastLabel(r)] : []), L.rule];
+      return out;
+    }
+    function confidence(s, mg, m, t, w) {
+      w = w || VD.W.w;
+      return pyRound(w[0] * s + w[1] * mg + w[2] * m + w[3] * t, 4);
+    }
+    function gate(fx, knownLabels, tau) {
+      tau = tau == null ? VD.W.tau : tau;
+      if (!fx) return { pass: false, conf: 0, tau, fail: ["none"] };
+      const conf = confidence(fx.s, fx.margin, fx.m, fx.t);
+      const known = knownLabels == null ? null : (knownLabels instanceof Set ? knownLabels : new Set(knownLabels));
+      const fresh = known === null || fx.sources.filter((lb) => lb !== L.rule).every((lb) => known.has(lb));
+      const fail = [["conf", conf < tau], ["clear", !fx.clear], ["fresh", !fresh], ["conflict", !!fx.conflict], ["contested", !!fx.contested]]
+        .filter(([, bad]) => bad).map(([k]) => k);
+      return { pass: !fail.length, conf, tau, fail };
+    }
+    function whyCheck(v, lang) {
+      const t = vT(lang).why_check;
+      return (v.fail || []).map((k) => (k === "conf" ? t.conf.replace("{c:.2f}", pyFixed(v.conf, 2)).replace("{tau:.2f}", pyFixed(v.tau, 2))
+        : k === "conflict" || k === "contested" ? t[k].replace("{why}", v[k] || "") : t[k]));
+    }
+    function decide(text, lang = "th", knownLabels = null) {
+      const lg = vlg(lang), T_ = VD.T[lg];
+      const c = classify(text);
+      const out = { type: c.type, reason: c.reason, stance: null, locked: false, conf: 0,
+        tau: VD.W.tau, fail: [], fields: {}, features: {}, status: "", label: "", sources: [] };
+      const fx = facts(text, lg);
+      if (c.type !== "closed") {
+        if (fx && fx.clear) Object.assign(out, { fields: fx.fields, sources: fx.sources, status: T_.status_pair });
+        return out;
+      }
+      const g = gate(fx, knownLabels);
+      Object.assign(out, { conf: g.conf, tau: g.tau, fail: g.fail });
+      if (fx) Object.assign(out, { fields: fx.fields, sources: fx.sources,
+        features: { s: fx.s, margin: fx.margin, m: fx.m, t: fx.t }, data_stance: fx.stance, conflict: fx.conflict, contested: fx.contested });
+      if (g.pass) Object.assign(out, { stance: fx.stance, locked: true, label: T_.stance[fx.stance],
+        status: c.reason ? T_.status_explain : T_.status_pair });
+      else Object.assign(out, { stance: "check", label: T_.stance.check, status: fx ? T_.status_pair : T_.status_check });
+      out.why = whyCheck(out, lg);
+      return out;
+    }
+    // json.dumps(..., ensure_ascii=False) ของ Python มีช่องว่างหลัง , และ :
+    const pyDumps = (o) => "{" + Object.entries(o).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(", ") + "}";
+    function promptBlock(v) {
+      if (!v || v.type !== "closed") return "";
+      const data = pyDumps(v.fields || {});
+      if (v.locked) {
+        const word = VD.word[v.stance];
+        return "<verdict>\nThe user asked a yes/no question. The first answer was already shown to the user, " +
+          `decided from structured data: ${word} (${v.label}).\nData: ${data}\n` +
+          `Start your reply with exactly one line "VERDICT: ${word}". Then explain the reasons using this data ` +
+          "and the knowledge passages. Do not change the verdict. If you believe the data is wrong, keep the " +
+          'verdict line and add one line starting with "NOTE:" that explains the doubt.\n</verdict>';
+      }
+      const hint = v.fields && Object.keys(v.fields).length ? `\nStructured data (low confidence, not confirmed): ${data}` : "";
+      return "<verdict>\nThe user asked a yes/no question that could not be confirmed from structured data." + hint +
+        '\nStart your reply with exactly one line: "VERDICT: YES", "VERDICT: NO", "VERDICT: DEPENDS" or ' +
+        '"VERDICT: UNKNOWN" (English, uppercase), decided only from the knowledge passages — DEPENDS = the passages ' +
+        "say it depends on conditions, UNKNOWN = the passages do not contain the answer. " +
+        "Then explain.\n</verdict>";
+    }
+    // → [YES|NO|DEPENDS|UNKNOWN|null, ข้อความที่เหลือ] (Python คืน tuple)
+    function splitAnswer(answer) {
+      const m = VLINE.exec(answer || "");
+      if (!m || m.index !== 0) return [null, answer];
+      return [m[1].toUpperCase(), answer.slice(m[0].length).replace(/^\n+/, "")];
+    }
+    function textStance(text) {
+      const s = String(text || "").trim();
+      if (s.startsWith("🧪")) return null;       // AI จำลองแค่แปะข้อความที่ค้นเจอ ไม่มีท่าทีของตัวเอง (verdict.text_stance)
+      const m = FIRST_SPLIT.exec(s);
+      const first = Array.from(m ? s.slice(0, m.index) : s).slice(0, 200).join("");
+      const no = ST_NO.exec(first), yes = ST_YES.exec(first);
+      if (no && yes) return no.index <= yes.index ? "NO" : "YES";   // "ได้ครับ ไม่ได้ขมมาก" = YES (verdict.text_stance)
+      return no ? "NO" : yes ? "YES" : null;
+    }
+    function consistent(v, answer) {
+      const [ai, body] = splitAnswer(answer);
+      const want = v.locked ? (VD.word[v.stance || ""] ?? null) : null;
+      if (v.type !== "closed") return { ok: true, ai, want: null, issue: "" };
+      if (ai === null) return { ok: false, ai: null, want, issue: 'The reply must start with one line "VERDICT: YES", ' +
+        '"VERDICT: NO", "VERDICT: DEPENDS" or "VERDICT: UNKNOWN".' + (want ? ` Use "VERDICT: ${want}".` : "") };
+      if (want && ai !== want) return { ok: false, ai, want,
+        issue: `Your verdict line says ${ai} but the locked verdict from the data is ${want}. Write "VERDICT: ${want}" ` +
+          'and explain it; if you disagree with the data, say so only in a line starting with "NOTE:".' };
+      const ts = textStance(body);
+      if ((want === "YES" || want === "NO") && ts && ts !== want) return { ok: false, ai, want,
+        issue: `The first sentence of your explanation reads as ${ts} but the verdict is ${want}. ` +
+          "Rewrite the explanation so it supports the verdict." };
+      return { ok: true, ai, want, issue: "" };
+    }
+    const stanceOf = (word) => ({ YES: "yes", NO: "no", DEPENDS: "depends", UNKNOWN: "unknown" })[word || ""] ?? null;
+
     // ------------------------------------------------------------ ตอบทันที (quick_answers.answer)
     function matchTopics(text) {
       const hits = T.filter((t) => t.re.test(text));
@@ -644,10 +836,11 @@
     }
 
     return { answer, asText, brewCalc, expandQuery, anchors, search, tokenize, normalize, similarity,
-      localPlan, formatPlan, localCheck, matchTopics, pairAnswer, imagesFor, answerIds, photoLinks, hybridSearch, hasVectors, fuse, data: D };
+      localPlan, formatPlan, localCheck, matchTopics, pairAnswer, imagesFor, answerIds, photoLinks, hybridSearch, hasVectors, fuse,
+      classify, facts, gate, decide, promptBlock, splitAnswer, textStance, consistent, stanceOf, whyCheck, data: D };
   }
 
-  const api = { create, roundHalfEven, fmt0, fmt1 };
+  const api = { create, roundHalfEven, fmt0, fmt1, pyRound, pyFixed };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CoffeeEngine = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -114,6 +114,28 @@
   .acts button.ai{border-color:var(--brand); color:var(--brand)}
   .srctext{white-space:pre-wrap; color:var(--text) !important; max-height:50vh; overflow:auto}
 
+  /* ---------- ตอบ 2 จังหวะ: คำตอบสั้นบนสุด · ช่องข้อมูล · ป้ายเวลา ---------- */
+  .verdict{margin:0 0 10px}
+  .vline{font-size:17px; font-weight:700; line-height:1.45}
+  .vdata{font-size:12px; color:var(--muted); margin:2px 0 6px; line-height:1.5}
+  .verdict .badge{margin-bottom:0}
+  details.why{margin:6px 0 0; font-size:12px; color:var(--muted)}
+  details.why summary{cursor:pointer; user-select:none}
+  details.why ul{margin:4px 0 0; padding-left:18px}
+  .notice.warn{color:var(--warn)}
+  .tm{font-size:10.5px; color:var(--muted); opacity:.8; white-space:nowrap}
+  /* 👍/👎 ใต้คำตอบ: เล็ก จาง ไม่มีกรอบ */
+  .fbrow{margin-top:8px; display:flex; align-items:center; gap:6px; min-height:22px}
+  .fb{display:flex; align-items:center; gap:4px; flex:1; min-width:0; font-size:11.5px; color:var(--muted)}
+  .fb button{border:none; background:none; padding:2px 5px; font-size:13px; opacity:.5; border-radius:6px}
+  .fb button:hover{opacity:1; background:var(--brand-soft)}
+  .fb button.txt{font-size:11.5px; opacity:.85; color:var(--brand)}
+  .fb input{flex:1; min-width:0; font:inherit; font-size:12px; padding:4px 8px; border:1px solid var(--line);
+            border-radius:7px; background:var(--bg); color:var(--text)}
+  .fb input:focus{outline:none; border-color:var(--brand)}
+  .fbrow .tm{margin-left:auto}
+  .histdiv{text-align:center; font-size:11.5px; color:var(--muted)}
+
   .thinking{display:flex; gap:5px; align-items:center; color:var(--muted); font-size:14px}
   .dot{width:6px; height:6px; border-radius:50%; background:var(--muted); animation:blink 1.4s infinite}
   .dot:nth-child(2){animation-delay:.2s}  .dot:nth-child(3){animation-delay:.4s}
@@ -320,6 +342,9 @@
     <p class="setstatus" id="status">…</p>
     <div class="setrow"><label id="langLbl" for="langSel"></label><select id="langSel"></select></div>
     <div class="setrow"><label id="clearLbl"></label><button id="btnReset"></button></div>
+    <label class="chk" style="color:var(--text); font-size:13.5px"><input type="checkbox" id="keepHist"><span id="keepHistLbl"></span></label>
+    <p class="note" id="keepHistNote" style="color:var(--muted); margin:4px 0 12px"></p>
+    <div class="setrow" id="fbRow" style="display:none"><label id="fbCountLbl"></label><button id="btnFbExport"></button></div>
     <h3 id="keyTitle"></h3>
     <p id="keyBody"></p>
     <div class="keyrow">
@@ -484,6 +509,10 @@ function applyLang(){
   $("fullAiLbl").textContent = T.fullAi;
   $("fullAiNote").textContent = T.fullAiNote;
   $("testModeNote").textContent = T.testModeNote;
+  $("keepHistLbl").textContent = T.histKeep;
+  $("keepHistNote").textContent = T.histNote;
+  $("btnFbExport").textContent = T.fbExport;
+  paintFbCount();
   for (const b of document.querySelectorAll(".xbtn")) b.title = T.close;
   $("wheelTitle").textContent = T.wheelTitle;
   $("wheelSub").textContent = T.wheelSub;
@@ -576,6 +605,7 @@ async function refreshStatus(){
   try{
     const s = await (await fetch("/api/status")).json();
     if (s.quota){ quota = s.quota; paintQuota(); }
+    if (typeof s.feedback === "number"){ fbCount = s.feedback; paintFbCount(); }   // เซิร์ฟเวอร์เก่าไม่มี = ซ่อนแถว
     // ไม่มีคีย์ก็ยังถามคำถามที่ตอบทันทีได้ → ไม่เด้งกล่องคีย์ตอนเปิด รอจนถามเรื่องที่ต้องใช้ AI (need_key)
     noKey = !s.has_key; paintQuota();
     if (!s.has_key){ $("status").textContent = T.noKey; return false; }
@@ -598,10 +628,10 @@ function addMessage(who, html, cls){
   chat.appendChild(row); scroll();
   return row.querySelector(".bubble");
 }
-function traceHtml(trace){
+function traceHtml(trace, tm){
   if (!trace || !trace.length) return "";
   const items = trace.map(e => `<li><b>${escapeHtml(e.label)}</b> — ${escapeHtml(e.message)}</li>`).join("");
-  return `<details class="trace"><summary>${escapeHtml(T.traceSummary(trace.length))}</summary><ol>${items}</ol></details>`;
+  return `<details class="trace"><summary>${escapeHtml(T.traceSummary(trace.length))}${tm ? ` <span class="tm">· ${escapeHtml(tm)}</span>` : ""}</summary><ol>${items}</ol></details>`;
 }
 
 // ---------- การ์ดคำตอบ
@@ -640,12 +670,15 @@ function actionsHtml(question, data){
   if (rel.length) h += `<span class="lbl">${escapeHtml(T.related)}</span>` + rel.slice(0, 3).map(q => `<button data-ask="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("");
   return h ? `<div class="acts">${h}</div>` : "";
 }
-function answerHtml(question, data){
+function answerHtml(question, data, tm){
   const notice = data.notice ? `<div class="notice">⚙︎ ${escapeHtml(data.notice)}</div>` : "";
   let badge, body;
   if (data.card){
     badge = `<span class="badge fast">${escapeHtml(data.kind === "calc" ? T.badgeCalc : T.badgeLocal)}</span>`;
-    body = `<p class="cardtitle">${escapeHtml(data.card.title)}</p><ul>${data.card.lines.map(l => `<li>${escapeHtml(l)}</li>`).join("")}</ul>`;
+    // หัวคำตอบแรก (ล็อกแล้ว) บอกผลไปแล้ว → ไม่ต้องซ้ำบรรทัด "⚠️ ไม่แนะนำ" / "✅ แนะนำ" บรรทัดแรกของการ์ด
+    const lines = data.verdict?.locked && /^(✅|👌|⚠️|🚫) \S+/u.test(data.card.lines[0] || "") && data.card.lines[0].length < 30
+      ? data.card.lines.slice(1) : data.card.lines;
+    body = `<p class="cardtitle">${escapeHtml(data.card.title)}</p><ul>${lines.map(l => `<li>${escapeHtml(l)}</li>`).join("")}</ul>`;
   } else {
     const cacheLabel = data.how === "seed" ? T.badgeSeed : data.how === "similar" ? T.badgeSimilar : T.badgeCache;
     const label = data.kind === "cache" ? cacheLabel : data.kind === "test" ? T.badgeTest : T.badgeAi(data.model || "");
@@ -654,10 +687,158 @@ function answerHtml(question, data){
          + render(data.answer);
   }
   return notice + badge + body + imagesHtml(data.images) + photoLinksHtml(data.photo_links) + sourcesHtml(data.card ? data.card.sources : data.sources)
-       + actionsHtml(question, data) + traceHtml(data.trace);
+       + actionsHtml(question, data) + traceHtml(data.trace, tm);
 }
+
+// ---------- ตอบ 2 จังหวะ (ป้ายคำตอบสั้น) — ข้อความ th/en มาจากเซิร์ฟเวอร์ ภาษาอื่นแปลเองจาก stance/fail
+const ICO = {best:"✅", ok:"👌", no:"❌", green:"🚫", yes:"✅", depends:"⚖️", unknown:"❔", check:"🔎"};
+const fmtMs = ms => ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+const hasFields = v => !!(v && v.fields && Object.keys(v.fields).length);
+const serverText = () => lang === "th" || lang === "en";
+function statusOf(v){                                   // ข้อความระหว่างรอ — ตรรกะเดียวกับ verdict.decide
+  if (!v) return T.thinking;
+  if (v.locked) return v.reason ? T.statusExplain : T.statusPair;
+  if (v.type === "closed") return hasFields(v) ? T.statusPair : T.statusCheck;
+  return hasFields(v) ? T.statusPair : T.thinking;
+}
+function waitingHtml(text){
+  return `<div class="thinking"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span style="margin-left:4px">${escapeHtml(text)}</span></div>`;
+}
+function whyHtml(v){
+  const list = serverText() && v.why && v.why.length ? v.why
+    : (v.fail || []).map(k => k === "conf" ? T.whyFail.conf((+v.conf).toFixed(2), (+v.tau).toFixed(2)) : (T.whyFail[k] || k));
+  return list.length ? `<details class="why"><summary>${escapeHtml(T.whyTitle)}</summary><ul>${list.map(w => `<li>${escapeHtml(w)}</li>`).join("")}</ul></details>` : "";
+}
+// full = จังหวะแรกที่ล็อกแล้ว → โชว์ความมั่นใจ + ป้าย ⚡ · ไม่ full = คำตอบจากจังหวะที่สอง (AI ตรวจจากฐานความรู้)
+function verdictHtml(v, st, full){
+  const f = Object.entries(v.fields || {}).map(([k, x]) => `${k}: ${x}`).join(", ");
+  const data = [f ? `{${f}}` : "", full ? `${T.confLbl} ${(+v.conf).toFixed(2)}` : ""].filter(Boolean).join(" · ");
+  return `<div class="verdict"><div class="vline">${ICO[st] || ""} ${escapeHtml(T.stance[st] || st)}</div>`
+       + (data ? `<div class="vdata">${escapeHtml(data)}</div>` : "")
+       + (full ? `<span class="badge fast">${escapeHtml(T.firstBadge(v.ms ?? "–"))}</span>` : "") + `</div>`;
+}
+function phase1Html(v){
+  if (!v || v.type !== "closed") return waitingHtml(statusOf(v));
+  if (v.locked) return verdictHtml(v, v.stance, true) + waitingHtml(statusOf(v));
+  return `<div class="verdict"><div class="vline">${ICO.check} ${escapeHtml(T.stance.check)}</div></div>`
+       + waitingHtml(statusOf(v)) + whyHtml(v);
+}
+// ฟองคำตอบสุดท้าย: ป้ายคำตอบสั้น (ล็อก = ของเดิม · เช็กก่อน = ผลจาก AI) → แจ้งแก้ตรง ๆ → เนื้อคำตอบ → 👍/👎
+function finalHtml(question, data, v, tm, withFb){
+  v = v || data.verdict;
+  const v2 = data.verdict2;
+  let head = "", note = "";
+  if (v && v.type === "closed"){
+    if (v.locked) head = verdictHtml(v, v.stance, true);
+    else if (v2 && v2.stance && v2.stance !== "check") head = verdictHtml(v, v2.stance, false);
+  }
+  if (v2 && v2.note){
+    const txt = serverText() ? v2.note : T.fixedNote(v2.ai || "?", T.stance[v && v.stance] || "");
+    note = `<div class="notice warn">${escapeHtml(txt)}</div>`;
+  }
+  const hasTrace = !!(data.trace && data.trace.length);
+  let foot = "";
+  if (withFb || (tm && !hasTrace)){
+    const fb = withFb ? fbHtml(question, data, v2 && v2.stance || v && v.stance) : `<div class="fb"></div>`;
+    foot = `<div class="fbrow">${fb}${tm && !hasTrace ? `<span class="tm">${escapeHtml(tm)}</span>` : ""}</div>`;
+  }
+  return head + note + answerHtml(question, data, hasTrace ? tm : "") + foot;
+}
+
+// ---------- 👍/👎 — เก็บในเครื่อง (server: feedback.jsonl) · 👎 = ลบคำตอบนั้นออกจาก cache
+const fbData = new Map();
+let fbSeq = 0, fbCount = null;
+function plainAnswer(data, st){
+  const head = st && T.stance[st] ? `[${T.stance[st]}]\n` : "";
+  return head + (data.card ? [data.card.title, ...data.card.lines].join("\n") : String(data.answer || ""));
+}
+function fbHtml(question, data, st){
+  const id = ++fbSeq;
+  fbData.set(String(id), {question, answer: plainAnswer(data, st), kind: data.kind || ""});
+  return `<div class="fb" data-fbid="${id}"><button data-fb="up" title="${escapeHtml(T.fbUp)}">👍</button>`
+       + `<button data-fb="down" title="${escapeHtml(T.fbDown)}">👎</button></div>`;
+}
+async function sendFeedback(b){
+  const box = b.closest(".fb"), info = fbData.get(box.dataset.fbid);
+  if (!info) return;
+  let vote = b.dataset.fb, note = "";
+  if (vote === "down"){                                   // 👎 เปิดช่องบอกว่าผิดตรงไหนก่อน
+    box.innerHTML = `<input maxlength="1000" placeholder="${escapeHtml(T.fbAsk)}">`
+                  + `<button class="txt" data-fb="downsend">${escapeHtml(T.send)}</button>`;
+    box.querySelector("input").focus();
+    return;
+  }
+  if (vote === "downsend"){ vote = "down"; note = box.querySelector("input").value.trim(); }
+  for (const x of box.querySelectorAll("button,input")) x.disabled = true;
+  try{
+    const r = await (await fetch("/api/feedback", {method:"POST", headers:{"Content-Type":"application/json"},
+                                                   body: JSON.stringify({vote, note, ...info})})).json();
+    if (r.error) throw new Error(r.error);
+    box.textContent = T.fbThanks + (r.dropped ? " · " + T.fbDropped : "");
+    fbData.delete(box.dataset.fbid);
+    if (typeof r.count === "number"){ fbCount = r.count; paintFbCount(); }
+  }catch{
+    for (const x of box.querySelectorAll("button,input")) x.disabled = false;
+    box.title = T.fbFail;
+    if (!box.querySelector(".fberr")) box.insertAdjacentHTML("beforeend", `<span class="fberr">${escapeHtml(T.fbFail)}</span>`);
+  }
+}
+function paintFbCount(){
+  if (fbCount === null) return;
+  $("fbRow").style.display = "";
+  $("fbCountLbl").textContent = T.fbCount(fbCount);
+}
+$("btnFbExport").onclick = async () => {
+  try{
+    const r = await (await fetch("/api/feedback")).json();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], {type: "application/json"}));
+    const a = document.createElement("a");
+    a.href = url; a.download = "coffee-feedback.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }catch{ $("status").textContent = T.noServer; }
+};
+
+// ---------- ประวัติแชท (เลือกเปิดเอง · ปิดไว้ก่อน) — localStorage ของเบราว์เซอร์นี้เท่านั้น
+const HIST_MAX = 50;
+const histOn = () => load("keepHist") === "1";
+function readHistory(){ try{ const h = JSON.parse(load("history") || "[]"); return Array.isArray(h) ? h : []; }catch{ return []; } }
+function saveHistory(q, data, v){
+  if (!histOn()) return;
+  const {trace, quota: _q, ...keep} = data;               // ไม่เก็บขั้นตอน/โควตา ให้ไฟล์เล็ก
+  const h = readHistory();
+  h.push({q, data: keep, verdict: v || data.verdict || null, at: Date.now()});
+  try{ localStorage.setItem("history", JSON.stringify(h.slice(-HIST_MAX))); }
+  catch{ try{ localStorage.setItem("history", JSON.stringify(h.slice(-10))); }catch{} }   // พื้นที่เต็ม → เก็บแค่ 10 อันล่าสุด
+}
+function restoreHistory(){
+  const h = histOn() ? readHistory() : [];
+  if (!h.length) return;
+  $("welcome")?.remove();
+  const div = document.createElement("div");
+  div.className = "histdiv"; div.textContent = T.histDivider;
+  chat.appendChild(div);
+  for (const x of h){
+    try{
+      addMessage("me", render(x.q));
+      addMessage("bot", finalHtml(x.q, x.data || {}, x.verdict, "", false));
+    }catch{}
+  }
+  scroll();
+}
+$("keepHist").onchange = () => {
+  const on = $("keepHist").checked;
+  store("keepHist", on ? "1" : undefined);
+  if (!on) store("history", undefined);                   // ปิด = ลบประวัติที่เก็บไว้ทันที
+};
+
+chat.addEventListener("keydown", e => {                   // Enter ในช่อง 👎 = ส่ง
+  if (e.key === "Enter" && e.target.matches(".fb input")){ e.preventDefault(); e.target.closest(".fb").querySelector("[data-fb]")?.click(); }
+});
 chat.addEventListener("click", async e => {
   const b = e.target.closest("button");
+  if (b && b.dataset.fb){ sendFeedback(b); return; }      // feedback กดได้แม้กำลังรอคำตอบอื่น
   if (!b || busy) return;
   if (b.dataset.askAi !== undefined) send(b.dataset.askAi, {forceAi: true});
   else if (b.dataset.ask !== undefined) send(b.dataset.ask);
@@ -683,9 +864,16 @@ async function send(text, opts = {}){
   addMessage("me", render(text));
 
   busy = true; $("btnSend").disabled = true;
-  const bubble = addMessage("bot", `<div class="thinking">
-      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-      <span style="margin-left:4px">${escapeHtml(T.thinking)}</span></div>`);
+  const t0 = performance.now();
+  let v = null, ttv = null;
+  const bubble = addMessage("bot", waitingHtml(T.thinking));
+  // จังหวะแรก: /api/verdict ตอบในไม่กี่ ms (ไม่ใช้ AI) → โชว์คำตอบสั้นทันที · เซิร์ฟเวอร์เก่าไม่มี = ข้ามไปแบบเดิม
+  try{
+    const r = await fetch("/api/verdict", {method:"POST", headers:{"Content-Type":"application/json"},
+                                           body: JSON.stringify({message:text})});
+    if (r.ok){ const j = await r.json(); if (j && j.type) v = j; }
+  }catch{}
+  if (v){ bubble.innerHTML = phase1Html(v); ttv = performance.now() - t0; scroll(); }
   try{
     const res = await fetch("/api/chat", {
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -698,8 +886,11 @@ async function send(text, opts = {}){
       bubble.innerHTML = render(data.error) + traceHtml(data.trace);
       if (data.need_key) openKeyDialog(data.error);
     } else {
+      const ttc = performance.now() - t0;
+      const tm = `TTV ${fmtMs(ttv ?? ttc)} · TTC ${fmtMs(ttc)}`;
       bubble.className = "bubble";
-      bubble.innerHTML = answerHtml(text, data);
+      bubble.innerHTML = finalHtml(text, data, v, tm, true);
+      saveHistory(text, data, v);
       if (data.model) refreshStatus();
     }
   }catch{
@@ -767,6 +958,7 @@ $("btnReset").onclick = async () => {
   if (busy) return;
   $("keyDialog").close();
   await fetch("/api/reset", {method:"POST"});
+  store("history", undefined);                            // ล้างแชท = ลบประวัติที่เก็บไว้ด้วย (ตัวเลือกเปิด/ปิดยังคงเดิม)
   chat.innerHTML = ""; showAllChips = false; buildWelcome(); refreshQuota();
 };
 
@@ -812,6 +1004,8 @@ function buildWelcome(){
   if (!window.I18N[lang]) lang = "th";
   buildLangSelect();
   applyLang();
+  $("keepHist").checked = histOn();
+  restoreHistory();
   if (lang !== "th"){
     try{ await fetch("/api/lang", {method:"POST", headers:{"Content-Type":"application/json"},
                                    body: JSON.stringify({lang})}); }catch{}

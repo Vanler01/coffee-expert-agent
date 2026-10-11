@@ -76,10 +76,11 @@
     // ------------------------------------------------------------ cache (answer_cache.py)
     const keyOf = (q) => `${S.lang}|${E.normalize(q)}`;
     function cacheGet(q) { return S.get("cache", {})[keyOf(q)] || null; }
-    function cachePut(q, answer, sources, model) {
+    function cachePut(q, answer, sources, model, verdict = null) {
       if (!E.normalize(q) || !answer.trim()) return;
       const c = S.get("cache", {});
       c[keyOf(q)] = { question: q.trim(), answer, sources, model, at: Math.floor(now() / 1000) };
+      if (verdict) c[keyOf(q)].verdict = verdict;           // v8: คำตอบที่ตรงกับคำตอบแรก → จำ stance ไว้ตอบซ้ำ
       const keys = Object.keys(c);
       if (keys.length > D.cache_max) keys.sort((a, b) => c[a].at - c[b].at).slice(0, keys.length - D.cache_max).forEach((k) => delete c[k]);
       S.set("cache", c);
@@ -195,16 +196,33 @@
       return "<knowledge>\n" + blocks.join("\n\n") + "\n</knowledge>";
     }
 
-    async function runAgent(question, model, trace) {
+    // v8 ตอบ 2 จังหวะ: แนบบล็อก <verdict> ต่อท้ายข้อมูล (agent.run) + ข้อความ trace เหมือน agent.py
+    function verdictBlock(v, trace) {
+      const block = E.promptBlock(v || {});
+      if (block) trace("verdict", v.locked ? "ล็อกคำตอบแรก: " + D.verdict.word[v.stance]
+        : "คำถามปลายปิด ยังไม่มีคำตอบแรก → ให้ AI ตัดสินจากข้อมูลก่อน");
+      return block;
+    }
+    // ขั้น 5 ตรวจย้อน (อยู่ใน Reflection ของ agent.py) → ไม่ตรง = เพิ่มเป็น issue ให้แก้ 1 รอบ
+    function verdictReview(v, block, answer, review, trace) {
+      if (!block) return review;
+      const cons = E.consistent(v, answer);
+      trace("verdict", "ตรวจย้อน: " + (cons.ok ? "ตรงกับคำตอบแรก" : cons.issue));
+      return cons.ok ? review : { ...review, approved: false, issues: [...review.issues, cons.issue] };
+    }
+
+    async function runAgent(question, model, trace, v) {
       const sources = [], toolLog = [];
       trace("perception", "input: text");
       trace("organize", "recalled 0 memory item(s), 0 lesson(s)");
       const evidence = await prefetch(question, sources, trace);
+      const block = verdictBlock(v, trace);                 // agent.py: หลังค้นล่วงหน้า ก่อนวางแผน
       const plan = E.localPlan(question, sources, langName());
       trace("planning", `(วางแผนในเครื่อง) ${plan.subgoals.length} subgoal(s)`);
       const d = new Date(now());
       const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      const context = `<context>\nToday is ${iso} (${d.toLocaleDateString("en-US", { weekday: "long" })}).\n</context>\n${evidence}`;
+      let context = `<context>\nToday is ${iso} (${d.toLocaleDateString("en-US", { weekday: "long" })}).\n</context>\n${evidence}`;
+      if (block) context += "\n" + block;
       const contents = [];
       for (const [u, a] of S.stm) contents.push({ role: "user", parts: [{ text: u }] }, { role: "model", parts: [{ text: a }] });
       contents.push({ role: "user", parts: [{ text: context }, { text: question }, { text: `<plan>\n${E.formatPlan(plan)}\n</plan>` }] });
@@ -232,8 +250,9 @@
 
       let answer = await act();
       for (let attempt = 0; attempt <= D.max_revisions; attempt++) {
-        const review = E.localCheck(question, answer, evidence + toolLog.join("\n"), langName());
+        let review = E.localCheck(question, answer, evidence + toolLog.join("\n"), langName());
         trace("reflection", "(ตรวจในเครื่อง) " + (review.approved ? "approved" : review.issues.join("; ")));
+        review = verdictReview(v, block, answer, review, trace);
         if (review.approved || attempt === D.max_revisions) break;
         contents.push({ role: "user", parts: [{ text: "[Self-critique] Revise your answer to fix these issues:\n" + review.issues.map((i) => `- ${i}`).join("\n") }] });
         answer = await act();
@@ -242,10 +261,11 @@
       return { answer, sources: sources.slice(0, 4) };
     }
 
-    async function mockAnswer(question, trace) {
+    async function mockAnswer(question, trace, v) {
       const sources = [];
       trace("perception", "input: text");
       const ev = await prefetch(question, sources, trace);
+      const block = verdictBlock(v, trace);
       trace("planning", "(วางแผนในเครื่อง) 3 subgoal(s)");
       const body = ev.split("<knowledge>")[1].split("</knowledge>")[0].trim();
       const lines = body.split("\n\n").filter((b) => /^\[\d+\]/.test(b)).slice(0, 2).map((b) => {
@@ -253,9 +273,17 @@
         let text = b.slice(nl + 1); if (text.includes("\n")) text = text.slice(text.indexOf("\n") + 1);
         return `- **${head.split("§ ").slice(1).join("§ ") || head}** — ${text.slice(0, 220)}${text.length > 220 ? "…" : ""}`;
       });
-      trace("reflection", "(ตรวจในเครื่อง) approved");
+      // คำถามปลายปิด: ขึ้นต้นด้วย VERDICT ตามที่ล็อกไว้ · ไม่ได้ล็อก = DEPENDS (เหมือน mock_provider._verdict_line)
+      const vm = block ? /exactly one line "VERDICT: (YES|NO|DEPENDS|UNKNOWN)"/.exec(block) : null;
+      const vline = block ? `VERDICT: ${vm ? vm[1] : "DEPENDS"}\n` : "";
+      const answer = vline + D.mock_prefix + "\n" + (lines.length ? lines : ["- (ไม่พบข้อมูลที่เกี่ยวข้องในฐานความรู้)"]).join("\n");
+      for (let attempt = 0; attempt <= D.max_revisions; attempt++) {   // AI จำลองตอบเหมือนเดิมทุกรอบ
+        trace("reflection", "(ตรวจในเครื่อง) approved");
+        const review = verdictReview(v, block, answer, { approved: true, issues: [] }, trace);
+        if (review.approved) break;
+      }
       trace("output", "done (test:mock)");
-      return { answer: D.mock_prefix + "\n" + (lines.length ? lines : ["- (ไม่พบข้อมูลที่เกี่ยวข้องในฐานความรู้)"]).join("\n"), sources: sources.slice(0, 4) };
+      return { answer, sources: sources.slice(0, 4) };
     }
 
     // ------------------------------------------------------------ เหมือน Session.chat ของ server.py
@@ -267,27 +295,84 @@
       return fn;
     }
 
+    const clock = () => (typeof performance !== "undefined" && performance.now ? performance.now() : now());
+    const round = (x, nd) => Math.round(x * 10 ** nd) / 10 ** nd;
+    // จังหวะแรก (ขั้น 1–3) ในเครื่องล้วน — เหมือน Session.decide
+    const knownLabels = new Set(D.chunks.map((c) => c.label));
+    function decide(message) {
+      const t0 = clock();
+      const v = E.decide(message, S.lang, knownLabels);
+      v.ms = round(clock() - t0, 2);
+      return v;
+    }
+    // ขั้น 5 หลัง AI ตอบ (Session._phase2): ตัดบรรทัด VERDICT · สวนคำตอบแรก (หลังแก้ 1 รอบ) → บอกแก้ตรง ๆ
+    function phase2(v, answer) {
+      if (v.type !== "closed") return [answer, null];
+      const [word, body] = E.splitAnswer(answer);
+      const cons = E.consistent(v, answer);
+      const lg = S.lang in D.verdict.T ? S.lang : "en";
+      const stance = v.locked ? v.stance : (E.stanceOf(word) || "check");
+      const note = v.locked && !cons.ok ? D.verdict.T[lg].fixed.replace("{ai}", word || "?").replace("{locked}", v.label || "") : "";
+      return [body, { stance, consistent: cons.ok, ai: word, note, locked: !!v.locked }];
+    }
+    // ตัวเลขวัดผล 1 แถว/คำถาม (Session._log_metrics) — ไม่เก็บข้อความ · เก็บ 300 แถวล่าสุด
+    function logMetrics(r, v, totalMs) {
+      const layer = ["ai", "test"].includes(r.kind) ? 2 : r.kind === "cache" ? 1 : 0;
+      const locked = !!v.locked;
+      const row = { at: Math.floor(now() / 1000), type: v.type ?? null, stance: v.stance ?? null, locked, conf: v.conf ?? null,
+        layer, kind: r.kind || "error", calls: r.calls || 0,
+        ttv_ms: locked ? v.ms : (v.type === "closed" ? totalMs : null), ttc_ms: totalMs,
+        consistent: (r.verdict2 || {}).consistent ?? null };
+      S.set("vlog", S.get("vlog", []).concat([row]).slice(-300));
+    }
+    // 👍/👎 (Session.feedback) — 👎 = ลบคำตอบนั้นออกจาก cache ไม่ให้ตอบซ้ำ · เก็บ 500 แถวล่าสุด
+    function feedback(body) {
+      const vote = body.vote;
+      if (vote !== "up" && vote !== "down") return { error: "vote ต้องเป็น up หรือ down" };
+      const q = String(body.question ?? "").slice(0, 4000);
+      const row = { at: Math.floor(now() / 1000), lang: S.lang, question: q, answer: String(body.answer ?? "").slice(0, 6000),
+        kind: String(body.kind ?? "").slice(0, 20), vote, note: String(body.note ?? "").slice(0, 1000) };
+      S.set("feedback", S.get("feedback", []).concat([row]).slice(-500));
+      let dropped = false;
+      if (vote === "down") {
+        const c = S.get("cache", {}), k = keyOf(q);
+        if (k in c) { delete c[k]; S.set("cache", c); dropped = true; }
+      }
+      return { ok: true, dropped, count: S.get("feedback", []).length };
+    }
+
     // แนบรูป (Cloudflare) กับทุกคำตอบ — เหมือน server.Session.chat
     async function chat(message, forceAi) {
-      const r = await chatInner(message, forceAi);
+      const t0 = clock();
+      const v = decide(message);
+      const r = await chatInner(message, forceAi, v);
+      if (!("verdict" in r)) r.verdict = v;
+      logMetrics(r, v, round(clock() - t0, 1));
       if (!r.error) {
         r.images = E.imagesFor(message, r.card || null, r.sources || []).map((im) => ({ ...im, url: D.image_base + im.file }));
         r.photo_links = E.photoLinks(E.answerIds(message, r.card || null, r.sources || []));
       }
       return r;
     }
-    async function chatInner(message, forceAi) {
+    async function chatInner(message, forceAi, v) {
       const trace = makeTrace();
-      if (!forceAi) {
+      v = v || {};
+      // v8: ปลายปิดที่ "ถามเหตุผล" หรือ "ข้อมูลยังไม่ชัด" → ให้ AI อธิบาย/ตรวจ (ถ้าถามได้) · ข้ามการ์ดและ cache
+      const closed = v.type === "closed";
+      const wantAi = closed && (S.testMode || canAsk()) &&
+        ((v.locked && v.reason) || (!v.locked && v.fields && Object.keys(v.fields).length > 0));
+      if (!forceAi && !wantAi) {
         const card = E.answer(message, S.lang);
         if (card) { remember(message, E.asText(card)); return { kind: card.kind, card, quota: snapshot() }; }
       }
       if (S.testMode) {
-        const r = await mockAnswer(message, trace);
-        return { kind: "test", answer: r.answer, sources: r.sources, trace: trace.events, model: "mock", quota: snapshot() };
+        const r = await mockAnswer(message, trace, v);
+        remember(message, r.answer);
+        const [answer, v2] = phase2(v, r.answer);
+        return { kind: "test", answer, sources: r.sources, trace: trace.events, model: "mock", quota: snapshot(), verdict2: v2 };
       }
       const fresh = S.stm.length === 0;
-      if (!forceAi) {
+      if (!forceAi && !wantAi) {
         let hit = D.seeds[keyOf(message)] ? [1, D.seeds[keyOf(message)]] : null, how = "seed";
         if (!hit && fresh && cacheGet(message)) { hit = [1, cacheGet(message)]; how = "exact"; }
         if (!hit && fresh) {
@@ -297,8 +382,10 @@
         if (hit) {
           const e = hit[1];
           remember(message, e.answer);
-          return { kind: "cache", how, answer: e.answer, sources: e.sources || [], model: e.model || "",
+          const out = { kind: "cache", how, answer: e.answer, sources: e.sources || [], model: e.model || "",
             cached_at: e.at || 0, asked: e.question || "", quota: snapshot() };
+          if (e.verdict && closed) out.verdict2 = { stance: e.verdict, consistent: true, ai: null, note: "" };
+          return out;
         }
       }
       if (!canAsk()) return { error: "ยังไม่มี API key ของ Gemini — ใส่คีย์ได้ที่ ตั้งค่า ⚙️ (ขอฟรีที่ aistudio.google.com) · คำถามที่ตอบในเครื่องยังใช้ได้", need_key: true, trace: trace.events };
@@ -312,14 +399,15 @@
         tried.push(model);
         const before = requests;
         try {
-          const r = await runAgent(message, model, trace);
+          const r = await runAgent(message, model, trace, v);
+          const [answer, v2] = phase2(v, r.answer);
           const calls = requests - before; total += calls;
           recordCalls(model, calls); recordQuestion(total); clearCool(model);
           S.model = model;
-          if (fresh) cachePut(message, r.answer, r.sources, model);
+          if (fresh) cachePut(message, answer, r.sources, model, v2 && v2.consistent ? v2.stance : null);
           await refreshShared();
-          remember(message, r.answer);
-          const out = { kind: "ai", answer: r.answer, sources: r.sources, calls: total, trace: trace.events, model, quota: snapshot() };
+          remember(message, r.answer);                        // ความจำระยะสั้นเก็บคำตอบดิบ (agent.run เก็บก่อนตัดบรรทัด VERDICT)
+          const out = { kind: "ai", answer, sources: r.sources, calls: total, trace: trace.events, model, quota: snapshot(), verdict2: v2 };
           if (tried.length > 1) out.notice = `รุ่นแรกไม่ว่าง เปลี่ยนไปใช้ ${model} ให้อัตโนมัติ`;
           return out;
         } catch (e) {
@@ -340,12 +428,13 @@
     }
 
     // ------------------------------------------------------------ API แบบเดียวกับ server.py
-    async function handle(path, body, params) {
+    async function handle(path, body = {}, params, method = "POST") {
       switch (path) {
         case "status": await refreshShared(); return { has_key: S.testMode || canAsk(), provider: "gemini", model: S.model, domain: "coffee",
           chunks: D.chunks.length, mode: "bm25", error: "", lang: S.lang, languages: D.languages, quota: snapshot(),
           quick_topics: D.topics.length, cached_answers: Object.keys(S.get("cache", {})).length,
-          seeded_answers: Object.keys(D.seeds).length, test_mode: S.testMode, full_ai: false, version: `${D.version} (${D.version_date})` };
+          seeded_answers: Object.keys(D.seeds).length, test_mode: S.testMode, full_ai: false, version: `${D.version} (${D.version_date})`,
+          feedback: S.get("feedback", []).length, verdict_tau: D.verdict.W.tau };
         case "quota": await refreshShared(); return snapshot();
         case "chat": {
           const m = String(body.message || "").trim();
@@ -353,6 +442,11 @@
           if (m.length > 4000) return { error: "คำถามยาวเกิน 4,000 ตัวอักษร" };
           return chat(m, !!body.force_ai);
         }
+        case "verdict": {
+          const m = String(body.message || "").trim().slice(0, 4000);
+          return m ? decide(m) : { error: "ยังไม่ได้พิมพ์คำถาม" };
+        }
+        case "feedback": return String(method).toUpperCase() === "GET" ? { feedback: S.get("feedback", []) } : feedback(body);
         case "lang": if (!D.languages[body.lang]) return { error: `ไม่รองรับภาษา '${body.lang}'` };
           if (body.lang !== S.lang) { S.lang = body.lang; S.stm = []; } return { ok: true, lang: S.lang };
         case "reset": S.stm = []; return { ok: true };
@@ -372,7 +466,7 @@
         default: return { error: "not found" };
       }
     }
-    return { handle, chat, snapshot, state: S, stats: () => ({ requests, embedCalls }) };
+    return { handle, chat, decide, snapshot, state: S, stats: () => ({ requests, embedCalls }) };
   }
 
   const api = { create };
@@ -400,7 +494,7 @@
         const { B } = await ready;
         let body = {};
         try { body = init && init.body ? JSON.parse(init.body) : {}; } catch { body = {}; }
-        return json(await B.handle(p.slice(i + 5), body, url.searchParams));
+        return json(await B.handle(p.slice(i + 5), body, url.searchParams, (init && init.method) || (typeof input === "string" ? "GET" : input.method) || "GET"));
       }
     }
     return realFetch(input, init);

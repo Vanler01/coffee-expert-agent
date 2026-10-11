@@ -4,6 +4,15 @@
 window.I18N = {
   th: {
     name: "ไทย",
+    // v8 ตอบ 2 จังหวะ · feedback · ประวัติแชท
+    stance: {unknown: "ไม่มีข้อมูลในฐานความรู้ครับ", best: "แนะนำครับ", ok: "ได้ครับ ใช้ได้", no: "ไม่แนะนำครับ", green: "ไม่ใช้ชงครับ", yes: "ใช่ครับ", depends: "ขึ้นอยู่กับหลายอย่างครับ", check: "ขอเช็กข้อมูลก่อนครับ"},
+    statusPair: "กำลังดูข้อมูลการจับคู่…", statusCheck: "กำลังหาข้อมูลในฐานข้อมูล โปรดรอสักครู่", statusExplain: "AI กำลังเขียนเหตุผลจากข้อมูลที่ล็อกไว้…",
+    confLbl: "มั่นใจ", firstBadge: ms => `⚡ คำตอบแรกจากข้อมูลจริง · ${ms} ms`, whyTitle: "ทำไมยังตอบทันทีไม่ได้",
+    whyFail: {conf: (c, t) => `ความมั่นใจ ${c} ต่ำกว่าเกณฑ์ ${t}`, clear: "ข้อมูลไม่ชัด (ชื่อในคำถามกว้าง/หลายตัว)", fresh: "หัวข้อในฐานความรู้ถูกแก้/หาย", conflict: "ข้อมูลขัดกันเอง", none: "ไม่มีคำตอบในช่องข้อมูล ต้องอ่านจากฐานความรู้"},
+    fixedNote: (ai, l) => `⚠️ คำอธิบายของ AI ไม่ตรงกับคำตอบแรก (${ai}) — ยึดตามข้อมูลการจับคู่: ${l}`,
+    fbUp: "คำตอบนี้มีประโยชน์", fbDown: "คำตอบนี้ผิด/ไม่ช่วย", fbAsk: "ผิดตรงไหน? (ไม่บังคับ)", fbThanks: "ขอบคุณ — บันทึกในเครื่องนี้เท่านั้น", fbDropped: "ลบคำตอบนี้ออกจากความจำแล้ว", fbFail: "บันทึกไม่ได้ ลองใหม่อีกครั้ง",
+    histKeep: "💾 เก็บประวัติแชทในเครื่องนี้ (ปิดไว้ก่อน)", histNote: "เก็บในเบราว์เซอร์ของเครื่องนี้เท่านั้น ไม่ส่งไปไหน · ล้างแชท = ลบประวัติ", histDivider: "— ประวัติที่เก็บไว้ —",
+    fbCount: n => `Feedback ที่ให้ไว้: ${n}`, fbExport: "⬇︎ ดาวน์โหลด (.json)",
     clear: "ล้างแชท", setKey: "ตั้งค่าคีย์", send: "ส่ง",
     placeholder: "พิมพ์คำถามเรื่องกาแฟ…  (Enter = ส่ง, Shift+Enter = ขึ้นบรรทัดใหม่)",
     welcomeTitle: "ถามอะไรเกี่ยวกับกาแฟก็ได้",
@@ -94,6 +103,14 @@ window.I18N = {
 
   en: {
     name: "English",
+    stance: {unknown: "Not in the knowledge base", best: "Recommended", ok: "Yes, it works", no: "Not recommended", green: "Not brewed", yes: "Yes", depends: "It depends", check: "Let me check the data first"},
+    statusPair: "Looking up the pairing data…", statusCheck: "Searching the knowledge base, one moment", statusExplain: "AI is writing the reasons from the locked data…",
+    confLbl: "confidence", firstBadge: ms => `⚡ First answer from real data · ${ms} ms`, whyTitle: "Why no instant answer",
+    whyFail: {conf: (c, t) => `confidence ${c} below threshold ${t}`, clear: "unclear data (broad or several names)", fresh: "knowledge-base topic changed or missing", conflict: "data disagrees with itself", none: "no structured answer — must read the knowledge base"},
+    fixedNote: (ai, l) => `⚠️ The AI explanation disagreed with the first answer (${ai}) — keeping the pairing data: ${l}`,
+    fbUp: "Helpful answer", fbDown: "Wrong or unhelpful", fbAsk: "What was wrong? (optional)", fbThanks: "Thanks — saved on this device only", fbDropped: "this answer was removed from memory", fbFail: "Couldn't save, please try again",
+    histKeep: "💾 Keep chat history on this device (off by default)", histNote: "Stored only in this browser, never sent anywhere · Clear chat = delete history", histDivider: "— Saved history —",
+    fbCount: n => `Feedback given: ${n}`, fbExport: "⬇︎ Download (.json)",
     clear: "Clear chat", setKey: "API key", send: "Send",
     placeholder: "Ask anything about coffee…  (Enter to send, Shift+Enter for a new line)",
     welcomeTitle: "Ask me anything about coffee",
@@ -184,6 +201,14 @@ window.I18N = {
 
   zh: {
     name: "中文",
+    stance: {unknown: "知识库中没有相关信息", best: "推荐", ok: "可以，适用", no: "不推荐", green: "生豆不用于冲煮", yes: "是的", depends: "要看情况", check: "让我先核对一下数据"},
+    statusPair: "正在查看搭配数据…", statusCheck: "正在知识库中查找，请稍候", statusExplain: "AI 正在根据锁定的数据撰写理由…",
+    confLbl: "置信度", firstBadge: ms => `⚡ 首个答案来自真实数据 · ${ms} ms`, whyTitle: "为什么不能立即回答",
+    whyFail: {conf: (c, t) => `置信度 ${c} 低于阈值 ${t}`, clear: "数据不明确（名称太宽泛或有多个）", fresh: "知识库中的条目已修改或缺失", conflict: "数据相互矛盾", none: "没有结构化答案，需要查阅知识库"},
+    fixedNote: (ai, l) => `⚠️ AI 的解释与首个答案不一致（${ai}）— 以搭配数据为准：${l}`,
+    fbUp: "有帮助", fbDown: "有误或没帮助", fbAsk: "哪里不对？（可选）", fbThanks: "谢谢 — 仅保存在本设备", fbDropped: "已从记忆中删除此答案", fbFail: "保存失败，请重试",
+    histKeep: "💾 在本设备保存聊天记录（默认关闭）", histNote: "仅保存在本浏览器中，不会发送到任何地方 · 清空聊天 = 删除记录", histDivider: "— 已保存的记录 —",
+    fbCount: n => `已提交的反馈：${n}`, fbExport: "⬇︎ 下载 (.json)",
     clear: "清空对话", setKey: "API 密钥", send: "发送",
     placeholder: "输入任何关于咖啡的问题…（Enter 发送，Shift+Enter 换行）",
     welcomeTitle: "咖啡的问题，尽管问",
@@ -274,6 +299,14 @@ window.I18N = {
 
   ja: {
     name: "日本語",
+    stance: {unknown: "知識ベースに情報がありません", best: "おすすめです", ok: "はい、使えます", no: "おすすめしません", green: "生豆は抽出に使いません", yes: "はい", depends: "条件によります", check: "まずデータを確認します"},
+    statusPair: "組み合わせデータを確認中…", statusCheck: "知識ベースを検索しています。少々お待ちください", statusExplain: "AI が確定したデータから理由を書いています…",
+    confLbl: "確信度", firstBadge: ms => `⚡ 実データからの最初の回答 · ${ms} ms`, whyTitle: "すぐに答えられない理由",
+    whyFail: {conf: (c, t) => `確信度 ${c} が基準 ${t} 未満`, clear: "データが不明確（名前が広すぎる・複数ある）", fresh: "知識ベースの項目が変更または欠落", conflict: "データが矛盾している", none: "構造化データに答えがなく、知識ベースを読む必要がある"},
+    fixedNote: (ai, l) => `⚠️ AI の説明が最初の回答（${ai}）と食い違いました — 組み合わせデータを優先します：${l}`,
+    fbUp: "役に立った", fbDown: "間違い・役に立たない", fbAsk: "どこが違いましたか？（任意）", fbThanks: "ありがとうございます — この端末にのみ保存", fbDropped: "この回答を記憶から削除しました", fbFail: "保存できませんでした。もう一度お試しください",
+    histKeep: "💾 この端末にチャット履歴を保存（初期はオフ）", histNote: "このブラウザにのみ保存され、どこにも送信されません · チャットを消去 = 履歴を削除", histDivider: "— 保存された履歴 —",
+    fbCount: n => `送ったフィードバック：${n}`, fbExport: "⬇︎ ダウンロード (.json)",
     clear: "チャットを消去", setKey: "APIキー", send: "送信",
     placeholder: "コーヒーについて何でも質問してください…（Enterで送信、Shift+Enterで改行）",
     welcomeTitle: "コーヒーのことなら何でもどうぞ",
@@ -364,6 +397,14 @@ window.I18N = {
 
   de: {
     name: "Deutsch",
+    stance: {unknown: "Nicht in der Wissensbasis", best: "Empfohlen", ok: "Ja, das passt", no: "Nicht empfohlen", green: "Wird nicht gebrüht", yes: "Ja", depends: "Kommt darauf an", check: "Ich prüfe zuerst die Daten"},
+    statusPair: "Kombinationsdaten werden geprüft…", statusCheck: "Durchsuche die Wissensbasis, einen Moment bitte", statusExplain: "Die KI schreibt die Begründung aus den festgelegten Daten…",
+    confLbl: "Sicherheit", firstBadge: ms => `⚡ Erste Antwort aus echten Daten · ${ms} ms`, whyTitle: "Warum keine Sofortantwort",
+    whyFail: {conf: (c, t) => `Sicherheit ${c} unter Schwelle ${t}`, clear: "unklare Daten (Name zu allgemein oder mehrere)", fresh: "Thema der Wissensbasis geändert oder fehlt", conflict: "Daten widersprechen sich", none: "keine strukturierte Antwort — Wissensbasis muss gelesen werden"},
+    fixedNote: (ai, l) => `⚠️ Die KI-Erklärung widersprach der ersten Antwort (${ai}) — es gelten die Kombinationsdaten: ${l}`,
+    fbUp: "Hilfreich", fbDown: "Falsch oder nicht hilfreich", fbAsk: "Was war falsch? (optional)", fbThanks: "Danke — nur auf diesem Gerät gespeichert", fbDropped: "Antwort aus dem Speicher entfernt", fbFail: "Speichern fehlgeschlagen, bitte erneut versuchen",
+    histKeep: "💾 Chatverlauf auf diesem Gerät speichern (standardmäßig aus)", histNote: "Nur in diesem Browser gespeichert, wird nirgendwohin gesendet · Chat leeren = Verlauf löschen", histDivider: "— Gespeicherter Verlauf —",
+    fbCount: n => `Abgegebenes Feedback: ${n}`, fbExport: "⬇︎ Herunterladen (.json)",
     clear: "Chat leeren", setKey: "API-Schlüssel", send: "Senden",
     placeholder: "Frag mich alles über Kaffee…  (Enter zum Senden, Shift+Enter für neue Zeile)",
     welcomeTitle: "Frag mich alles über Kaffee",
@@ -454,6 +495,14 @@ window.I18N = {
 
   fr: {
     name: "Français",
+    stance: {unknown: "Pas dans la base de connaissances", best: "Recommandé", ok: "Oui, ça convient", no: "Déconseillé", green: "Ne s'infuse pas", yes: "Oui", depends: "Ça dépend", check: "Je vérifie d'abord les données"},
+    statusPair: "Consultation des données d'accord…", statusCheck: "Recherche dans la base de connaissances, un instant", statusExplain: "L'IA rédige les raisons à partir des données verrouillées…",
+    confLbl: "confiance", firstBadge: ms => `⚡ Première réponse issue de données réelles · ${ms} ms`, whyTitle: "Pourquoi pas de réponse immédiate",
+    whyFail: {conf: (c, t) => `confiance ${c} sous le seuil ${t}`, clear: "données floues (nom trop large ou plusieurs)", fresh: "sujet de la base modifié ou absent", conflict: "les données se contredisent", none: "pas de réponse structurée — il faut lire la base de connaissances"},
+    fixedNote: (ai, l) => `⚠️ L'explication de l'IA contredisait la première réponse (${ai}) — on garde les données d'accord : ${l}`,
+    fbUp: "Utile", fbDown: "Faux ou inutile", fbAsk: "Qu'est-ce qui n'allait pas ? (facultatif)", fbThanks: "Merci — enregistré sur cet appareil uniquement", fbDropped: "réponse retirée de la mémoire", fbFail: "Échec de l'enregistrement, réessayez",
+    histKeep: "💾 Garder l'historique sur cet appareil (désactivé par défaut)", histNote: "Stocké uniquement dans ce navigateur, jamais envoyé · Effacer la discussion = supprimer l'historique", histDivider: "— Historique enregistré —",
+    fbCount: n => `Avis donnés : ${n}`, fbExport: "⬇︎ Télécharger (.json)",
     clear: "Effacer", setKey: "Clé API", send: "Envoyer",
     placeholder: "Posez n'importe quelle question sur le café…  (Entrée pour envoyer, Maj+Entrée pour une nouvelle ligne)",
     welcomeTitle: "Posez-moi vos questions sur le café",
@@ -544,6 +593,14 @@ window.I18N = {
 
   it: {
     name: "Italiano",
+    stance: {unknown: "Non presente nella base di conoscenza", best: "Consigliato", ok: "Sì, va bene", no: "Sconsigliato", green: "Non si estrae", yes: "Sì", depends: "Dipende", check: "Prima controllo i dati"},
+    statusPair: "Controllo i dati di abbinamento…", statusCheck: "Cerco nella base di conoscenza, un momento", statusExplain: "L'IA sta scrivendo le ragioni dai dati bloccati…",
+    confLbl: "affidabilità", firstBadge: ms => `⚡ Prima risposta da dati reali · ${ms} ms`, whyTitle: "Perché nessuna risposta immediata",
+    whyFail: {conf: (c, t) => `affidabilità ${c} sotto la soglia ${t}`, clear: "dati poco chiari (nome generico o più nomi)", fresh: "argomento della base modificato o mancante", conflict: "i dati si contraddicono", none: "nessuna risposta strutturata — serve leggere la base di conoscenza"},
+    fixedNote: (ai, l) => `⚠️ La spiegazione dell'IA contraddiceva la prima risposta (${ai}) — valgono i dati di abbinamento: ${l}`,
+    fbUp: "Utile", fbDown: "Sbagliata o inutile", fbAsk: "Cosa non andava? (facoltativo)", fbThanks: "Grazie — salvato solo su questo dispositivo", fbDropped: "risposta rimossa dalla memoria", fbFail: "Salvataggio non riuscito, riprova",
+    histKeep: "💾 Conserva la cronologia su questo dispositivo (disattivato)", histNote: "Salvata solo in questo browser, mai inviata · Cancella chat = elimina cronologia", histDivider: "— Cronologia salvata —",
+    fbCount: n => `Feedback inviati: ${n}`, fbExport: "⬇︎ Scarica (.json)",
     clear: "Svuota chat", setKey: "Chiave API", send: "Invia",
     placeholder: "Chiedimi qualsiasi cosa sul caffè…  (Invio per inviare, Maiusc+Invio per andare a capo)",
     welcomeTitle: "Chiedimi qualsiasi cosa sul caffè",
